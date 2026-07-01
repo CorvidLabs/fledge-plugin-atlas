@@ -25,6 +25,31 @@ fledge atlas --timeline      # write a .3md timeline, one plane per week of git 
 fledge atlas -o report.html  # choose the output path
 ```
 
+## The atlas, on itself
+
+This repo dogfoods what it measures. Its own [`specs/`](specs/) describe every
+source file, so `fledge atlas` run here reports **100% of the code under a spec,
+0 orphans, 0 phantoms** — the screenshots below are that self-atlas. (Optional:
+[`augur`](https://github.com/CorvidLabs/augur) and
+[`attest`](https://github.com/CorvidLabs/attest) light up the trust panel when
+they have data; neither is required to build or run the atlas.)
+
+The spec and code graph — each `*.spec.md` is a bubble, the files it governs are
+the dots inside, coloured by governance:
+
+![Spec and code graph](docs/graph.png)
+
+The spec dependency DAG, read from each spec's `depends_on:` — every visual
+depends on the `engine`, which settles to the bottom as the hub:
+
+![Spec dependency graph](docs/depgraph.png)
+
+The codebase treemap, coloured by governance (teal = has a spec, gray = none):
+
+![Codebase treemap](docs/treemap.png)
+
+Regenerate any time with `fledge atlas --open`.
+
 ### 3md spec deck
 
 `fledge atlas --3md` writes a [`.3md`](https://github.com/CorvidLabs/3md) file: a
@@ -57,8 +82,9 @@ Scrub the Z axis to walk the project forward through time.
     exact relationship.
   Both pan (drag background), zoom (scroll / buttons / fit), search, and drag a
   bubble to move it with its files. Click a bubble to focus just its subgraph.
-  Dashed bubbles flag specs that likely need review. Color dots **by spec**,
-  **by language**, **by recency**, or **by test coverage**.
+  Dashed bubbles flag specs that likely need review. Colour dots **by
+  governance** (the default: has a spec / shared by 2+ / no spec), or **by
+  spec**, **by language**, **by recency**, or **by test coverage**.
 - **Spec dependency graph** — a directed DAG read from each spec's
   `depends_on:` frontmatter. Every module is a node (sized by its lines of code,
   tinted by its spec color); an arrow points from a spec to the module it
@@ -98,8 +124,11 @@ Scrub the Z axis to walk the project forward through time.
 - **Since you last looked** — remembers your last visit in the browser and
   lists which specs changed since, so a returning reviewer sees the delta first.
 - **Delight views** — a **codebase treemap** (files sized by lines, coloured by
-  coverage), a **coverage sunburst** (specs to files, covered vs not), and a
-  **churn vs coverage** quadrant that flags the high-change, low-coverage corner.
+  governance: teal has a spec, amber shared by 2+ specs, gray none, or a
+  clay-to-green coverage tint when tests are known), a **coverage sunburst**
+  (specs to the files they govern), and a **churn vs coverage** quadrant that
+  flags the high-change, low-coverage corner. All three share one legend; which
+  spec owns a file is on hover.
 - **Trust and provenance** — auto-detected, shown only when the sibling tools
   have data: [`augur`](https://github.com/CorvidLabs/augur)'s current change-risk
   verdict, and recent [`attest`](https://github.com/CorvidLabs/attest)

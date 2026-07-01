@@ -8,3 +8,7 @@ Thumbs.db
 
 # Local agent worktrees and session state
 .claude/
+
+# generated self-atlas demo (screenshots in docs/ are committed instead)
+atlas.html
+*.atlas.html
