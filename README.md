@@ -16,6 +16,9 @@ fledge atlas --open          # write, then open in your browser
 fledge atlas --json          # print the full model as JSON (for agents / piping)
 fledge atlas --review        # JSON: specs that likely need review (for agents)
 fledge atlas --spec <MODULE> # JSON: one spec + its doc & companion contents
+fledge atlas --owns <PATH>   # JSON: which specs govern a file (reverse index)
+fledge atlas --since <REF>   # JSON: specs touched by changes since a git ref
+fledge atlas --gaps          # JSON: coverage-gap worklist (needs an lcov report)
 fledge atlas --3md           # write a .3md spec deck (open in the 3md viewer)
 fledge atlas -o report.html  # choose the output path
 ```
@@ -102,7 +105,7 @@ field**, so it never has to infer the picture from raw numbers.
 - **`files[]`** (each with its governing `specs`, `orphan` / `overlap` flags,
   `test_pct`, `updated_ts`), and **`phantoms[]`**.
 
-Two more commands make atlas an agent's primary lens on a project:
+A handful of commands make atlas an agent's primary lens on a project:
 
 - **`fledge atlas --review`** prints the specs that likely need attention, each
   with a plain reason: *"code changed 8d after the spec doc"*, spec-sync drift,
@@ -113,6 +116,20 @@ Two more commands make atlas an agent's primary lens on a project:
   the actual text of its doc and every companion file* (requirements/tasks/
   context/testing), plus its governed files. One call feeds an agent everything
   it needs to reason about or update that spec.
+- **`fledge atlas --owns <PATH>`** is the reverse index: hand it a source file
+  and it returns the specs that govern it, plus that file's `orphan` / `overlap`
+  flags, `test_pct`, last-change timestamp, and spec count. It matches by exact
+  path first, then any path with that suffix, then basename, and returns a null
+  result (never an error) when nothing matches. Answers "who owns this file?"
+- **`fledge atlas --since <REF>`** maps the paths changed since a git ref
+  (`<REF>..HEAD`) onto the specs whose footprint (governed files, spec doc, or
+  companions) they touch, and calls out which of those touched specs already
+  warrant review. It's the agent's "what did my branch move, and what should I
+  re-check?" It degrades to an empty result when git is unavailable.
+- **`fledge atlas --gaps`** prints a coverage-gap worklist: every source file
+  under 100% test coverage, each with the specs governing it and its uncovered
+  line count, ranked by uncovered lines (orphan files weighted lower). Needs an
+  lcov report; without one it returns a note and an empty list.
 
 The HTML also includes a **contribution calendar**: a GitHub-style day grid
 coloured teal (a spec doc changed), amber (code changed), or green (both changed

@@ -88,6 +88,22 @@ struct Cli {
     /// Open the generated HTML in the default browser when done.
     #[arg(long)]
     open: bool,
+
+    /// Reverse index: print (as JSON) which specs govern a given file, plus its
+    /// orphan/overlap/coverage facts. Matches by exact path, then suffix, then
+    /// basename. For agents.
+    #[arg(long, value_name = "PATH")]
+    owns: Option<String>,
+
+    /// Print (as JSON) which specs were touched by changes since a git ref
+    /// (`<REF>..HEAD`), and which of those now warrant review. For agents.
+    #[arg(long, value_name = "REF")]
+    since: Option<String>,
+
+    /// Print (as JSON) a coverage-gap worklist: source files under 100% test
+    /// coverage, ranked by uncovered lines. Needs an lcov report. For agents.
+    #[arg(long)]
+    gaps: bool,
 }
 
 /// One parsed `*.spec.md`.
@@ -150,6 +166,15 @@ fn run() -> Result<()> {
     }
     if let Some(module) = &cli.spec {
         return emit_spec_detail(&root, &specs, &sources, &model, module);
+    }
+    if let Some(query) = &cli.owns {
+        return emit_owns(&model, query);
+    }
+    if let Some(reference) = &cli.since {
+        return emit_since(&root, &specs, &model, reference);
+    }
+    if cli.gaps {
+        return emit_gaps(&model);
     }
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&model)?);
@@ -234,6 +259,188 @@ fn emit_spec_detail(
         "files": files,
     });
     println!("{}", serde_json::to_string_pretty(&detail)?);
+    Ok(())
+}
+
+/// Reverse index for `--owns <PATH>`: find the source file that best matches the
+/// query (exact rel-path, then any path with that suffix, then basename) and emit
+/// which specs govern it plus its orphan/overlap/coverage facts. When nothing
+/// matches, emit a null result rather than erroring.
+fn emit_owns(model: &Model, query: &str) -> Result<()> {
+    let q = normalize(query);
+    let qbase = q.rsplit('/').next().unwrap_or(q.as_str());
+    let file = model
+        .files
+        .iter()
+        .find(|f| f.path == q)
+        .or_else(|| model.files.iter().find(|f| f.path.ends_with(&q)))
+        .or_else(|| {
+            model
+                .files
+                .iter()
+                .find(|f| f.path.rsplit('/').next() == Some(qbase))
+        });
+
+    let out = match file {
+        Some(f) => {
+            let governed_by: Vec<serde_json::Value> = f
+                .specs
+                .iter()
+                .filter_map(|&i| model.specs.get(i))
+                .map(|s| serde_json::json!({ "module": s.module, "path": s.path }))
+                .collect();
+            serde_json::json!({
+                "query": query,
+                "file": f.path,
+                "governed_by": governed_by,
+                "orphan": f.orphan,
+                "overlap": f.overlap,
+                "test_pct": f.test_pct,
+                "last_change_ts": f.updated_ts,
+                "spec_count": f.specs.len(),
+            })
+        }
+        None => serde_json::json!({
+            "query": query,
+            "file": serde_json::Value::Null,
+            "matches": [],
+        }),
+    };
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+/// Changed-since worklist for `--since <REF>`: ask git for the paths changed
+/// since a ref, map them onto the specs whose footprint (governed files, spec
+/// doc, or companions) they touch, and flag which touched specs already warrant
+/// review. Degrades to an empty result when git is unavailable.
+fn emit_since(root: &Path, specs: &[Spec], model: &Model, reference: &str) -> Result<()> {
+    let changed = git_changed_since(root, reference);
+    let changed_set: std::collections::HashSet<&String> = changed.iter().collect();
+
+    let mut touched: Vec<usize> = Vec::new();
+    for (i, spec) in specs.iter().enumerate() {
+        let hit = spec
+            .files
+            .iter()
+            .chain(std::iter::once(&spec.rel_path))
+            .chain(spec.companions.iter())
+            .any(|p| changed_set.contains(p));
+        if hit {
+            touched.push(i);
+        }
+    }
+
+    let specs_touched: Vec<&str> = touched
+        .iter()
+        .filter_map(|&i| model.specs.get(i))
+        .map(|s| s.module.as_str())
+        .collect();
+    let review_after: Vec<&str> = touched
+        .iter()
+        .filter_map(|&i| model.specs.get(i))
+        .filter(|s| s.needs_review)
+        .map(|s| s.module.as_str())
+        .collect();
+
+    let out = serde_json::json!({
+        "ref": reference,
+        "files_changed": changed,
+        "specs_touched": specs_touched,
+        "review_after": review_after,
+        "counts": { "files": changed.len(), "specs": specs_touched.len() },
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+/// The set of paths changed since a git ref, newest-unique, normalized to the
+/// project's relative form. Tries `git diff <REF>..HEAD` first, then falls back
+/// to `git log --since=<REF>`. Returns empty when git is absent or both fail.
+fn git_changed_since(root: &Path, reference: &str) -> Vec<String> {
+    let run = |args: &[&str]| -> Option<Vec<String>> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut paths = Vec::new();
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let p = normalize(line);
+            if seen.insert(p.clone()) {
+                paths.push(p);
+            }
+        }
+        Some(paths)
+    };
+
+    let range = format!("{reference}..HEAD");
+    if let Some(paths) = run(&["diff", "--name-only", &range]) {
+        return paths;
+    }
+    let since = format!("--since={reference}");
+    run(&["log", &since, "--name-only", "--pretty=format:"]).unwrap_or_default()
+}
+
+/// Coverage-gap worklist for `--gaps`: source files under 100% test coverage,
+/// each with the specs governing it and its uncovered line count, ranked by
+/// uncovered lines (orphan files weighted lower since no spec asks for them).
+/// A no-op-shaped result when there is no lcov coverage to reason about.
+fn emit_gaps(model: &Model) -> Result<()> {
+    if model.stats.test_coverage_pct.is_none() {
+        let out = serde_json::json!({ "note": "no lcov coverage found", "gaps": [] });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    // (weight, file, test_pct, uncovered_loc, governing modules)
+    let mut rows: Vec<(f64, &FileOut, f64, i64, Vec<&str>)> = model
+        .files
+        .iter()
+        .filter_map(|f| {
+            let pct = f.test_pct?;
+            if pct >= 100.0 {
+                return None;
+            }
+            let uncovered = (f.loc as f64 * (1.0 - pct / 100.0)).round() as i64;
+            let weight = uncovered as f64 * if f.orphan { 0.5 } else { 1.0 };
+            let modules: Vec<&str> = f
+                .specs
+                .iter()
+                .filter_map(|&i| model.specs.get(i))
+                .map(|s| s.module.as_str())
+                .collect();
+            Some((weight, f, pct, uncovered, modules))
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+    let gaps: Vec<serde_json::Value> = rows
+        .iter()
+        .take(100)
+        .enumerate()
+        .map(|(i, (_, f, pct, uncovered, modules))| {
+            serde_json::json!({
+                "file": f.path,
+                "modules": modules,
+                "test_pct": pct,
+                "uncovered_loc": uncovered,
+                "rank": i + 1,
+            })
+        })
+        .collect();
+
+    let out = serde_json::json!({ "gaps": gaps });
+    println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
 }
 
