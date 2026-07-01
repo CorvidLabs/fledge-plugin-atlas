@@ -4240,7 +4240,7 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     // ---- Codebase treemap (files sized by lines) ----
     if !m.files.is_empty() {
         h.push_str("<section class=\"block comp\" id=\"c-treemap\"><h2>Codebase treemap</h2>");
-        h.push_str("<p class=\"hint\">Every source file, sized by its lines of code and coloured by the spec that owns it, so each spec reads as a territory. Files with no spec are gray. When test coverage is known, tiles instead run clay (untested) to green (covered). Hover a tile for its spec and coverage.</p>");
+        h.push_str("<p class=\"hint\">Every source file, sized by its lines of code and coloured by governance: teal has a spec, amber is shared by two or more specs, and gray has none (the work to do). When test coverage is known, spec-covered tiles instead run clay (untested) to green (covered). Hover a tile for which spec owns it and its coverage.</p>");
         h.push_str("<div class=\"delight\" id=\"tm-wrap\"><svg id=\"tm-svg\" role=\"img\" aria-label=\"Codebase treemap\"></svg><div id=\"tm-tip\" class=\"tip\"></div></div>");
         h.push_str("<div class=\"viz-legend\" id=\"tm-legend\"></div>");
         h.push_str("</section>");
@@ -4249,9 +4249,8 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     // ---- Coverage sunburst (specs ring + files ring) ----
     if !m.specs.is_empty() || m.files.iter().any(|f| f.orphan) {
         h.push_str("<section class=\"block comp\" id=\"c-sunburst\"><h2>Coverage sunburst</h2>");
-        h.push_str("<p class=\"hint\">The inner ring is your specs, sized by lines; the outer ring is the files each one governs. Uncovered files without a spec fall into the gray \"no spec\" wedge. The center shows overall coverage.</p>");
+        h.push_str("<p class=\"hint\">The inner ring is your specs, sized by lines; the outer ring is the files each one governs. Colour follows the same key as the treemap: teal is governed, gray is the \"no spec\" wedge, clay to green is coverage where known. The center shows overall coverage.</p>");
         h.push_str("<div class=\"delight sunburst\" id=\"sb-wrap\"><svg id=\"sb-svg\" role=\"img\" aria-label=\"Coverage sunburst\"></svg><div id=\"sb-tip\" class=\"tip\"></div></div>");
-        h.push_str("<div class=\"viz-legend\" id=\"sb-legend\"></div>");
         h.push_str("</section>");
     }
 

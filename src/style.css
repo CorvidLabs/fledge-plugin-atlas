@@ -326,7 +326,7 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .delight.sunburst svg{max-width:620px;margin:0 auto}
 #tm-svg .tm-cell rect{stroke:var(--bg);stroke-width:1.5}
 #tm-svg .tm-cell:hover rect{stroke:var(--accent);stroke-width:2}
-.tm-label{font-family:var(--font-mono);font-size:11px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round;pointer-events:none}
+.tm-label{font-family:var(--font-mono);font-size:11px;fill:var(--text);pointer-events:none;filter:drop-shadow(0 0 1.5px var(--bg)) drop-shadow(0 0 1.5px var(--bg))}
 #sb-svg .sb-arc{stroke:var(--bg);stroke-width:1}
 #sb-svg .sb-arc:hover{stroke:var(--accent);stroke-width:1.6}
 .sb-center{font-family:var(--font-display);font-size:34px;font-weight:700;fill:var(--text);text-anchor:middle}

@@ -12,25 +12,26 @@
   const specs = Array.isArray(data.specs) ? data.specs : [];
   const stats = data.stats || {};
   const hasCov = stats.test_coverage_pct != null;
-  const NOSPEC = 'color-mix(in srgb, var(--muted) 40%, var(--bg))';
+  // Governance-state palette: a handful of colours that always mean the same thing,
+  // so they stay legible whether a project has 3 specs or 300. Size = lines of code.
+  const NOSPEC   = 'color-mix(in srgb, var(--muted) 40%, var(--bg))'; // no spec (the work to do)
+  const GOVERNED = 'var(--chart-1)';   // has a spec
+  const SHARED   = 'var(--chart-3)';   // shared by 2+ specs
+  const specName = {};
+  specs.forEach(s => { if(s && s.index != null) specName[s.index] = s.module; });
 
   // Shade chart-4 (green) toward bad (clay) by coverage percentage.
   const covFill = pct => `color-mix(in srgb, var(--chart-4) ${Math.round(clamp(pct,0,100))}%, var(--bad))`;
 
-  // Spec index -> colour / name, so files can be coloured by the spec that owns them.
-  const specColor = {}, specName = {};
-  specs.forEach(s => { if(s && s.index != null){ specColor[s.index] = s.color; specName[s.index] = s.module; } });
-  const ownerColor = f => (Array.isArray(f.specs) && f.specs.length) ? (specColor[f.specs[0]] || 'var(--chart-1)') : 'var(--chart-1)';
-
-  // A source file's tile / arc colour: gray when unspecced; a clay->green tint when
-  // test coverage is known; otherwise the colour of the spec that owns it, so the
-  // map reads as spec territories instead of a flat wash.
-  function fillFor(f, specC){
+  // A file's tile / arc colour by governance state: gray when unspecced, amber when
+  // shared by 2+ specs, a clay->green tint when test coverage is known, else the
+  // single "has a spec" colour. Which spec owns it is shown on hover, not by colour.
+  function fileFill(f){
     if(f.orphan) return NOSPEC;
+    if(f.overlap) return SHARED;
     if(hasCov && f.test_pct != null) return covFill(f.test_pct);
-    return specC || 'var(--chart-1)';
+    return GOVERNED;
   }
-  function fileFill(f){ return fillFor(f, ownerColor(f)); }
 
   const note = (id, text) => {
     const el = document.getElementById(id);
@@ -151,7 +152,9 @@
     // Inner segments: one per spec (sized by loc, fallback share_pct), plus an
     // orphan segment at the end.
     const segs = specs.map(s=>({
-      kind:'spec', label:s.module, color:s.color,
+      kind:'spec', label:s.module,
+      // governance colouring: a spec band is "governed" teal, or a coverage tint when known.
+      color: (hasCov && s.test_pct != null) ? covFill(s.test_pct) : GOVERNED,
       value:Math.max(s.loc || 0, s.share_pct || 0, 0.001),
       files: files.filter(f=>Array.isArray(f.specs) && f.specs.indexOf(s.index) !== -1)
     }));
@@ -185,8 +188,8 @@
         if(fspan <= 0) return;
         const o = mk('path', 'sb-arc');
         o.setAttribute('d', arcPath(cx, cy, rMid+3, rOut, fa, fa+fspan));
-        o.style.fill = fillFor(f, seg.color);
-        o.style.fillOpacity = f.orphan ? 1 : 0.72;
+        o.style.fill = fileFill(f);
+        o.style.fillOpacity = f.orphan ? 1 : 0.82;
         const tc = f.test_pct != null ? ' · ' + Math.round(f.test_pct) + '% tested' : '';
         bindTip(host, tip, o, ()=>`<b>${esc(f.path.split('/').pop())}</b><span class="sub">${f.loc} LOC${tc}</span><span class="sub">${f.orphan ? 'no spec' : esc(seg.label)}</span>`);
         svg.appendChild(o);
@@ -286,22 +289,24 @@
     });
   }
 
-  // Colour key: the biggest specs by name, plus the "no spec" gray, so the
-  // colours in the treemap and sunburst are readable without hovering.
+  // One governance-state colour key, shared by the treemap and the sunburst just
+  // below it. Each colour means the same thing on every project; which spec owns a
+  // file is on hover, not in the key.
   function buildLegend(elId){
     const el = document.getElementById(elId); if(!el) return;
-    const ranked = specs.slice().sort((a,b)=>(b.loc||0)-(a.loc||0));
-    const top = ranked.slice(0, 10);
-    const item = (color, label, cls) =>
-      `<span class="lg-item${cls?' '+cls:''}"><span class="lg-sw" style="background:${color}"></span>${esc(label)}</span>`;
-    const parts = top.map(s=>item(s.color, s.module));
-    if(ranked.length > top.length) parts.push(`<span class="lg-item lg-more">+${ranked.length-top.length} more specs</span>`);
+    const item = (color, label) =>
+      `<span class="lg-item"><span class="lg-sw" style="background:${color}"></span>${esc(label)}</span>`;
+    const parts = [];
+    if(hasCov) parts.push(item('var(--chart-4)', 'tested'), item('var(--bad)', 'untested'));
+    else parts.push(item(GOVERNED, 'has a spec'));
+    if(files.some(f=>f.overlap)) parts.push(item(SHARED, 'shared by 2+ specs'));
     if(files.some(f=>f.orphan)) parts.push(item(NOSPEC, 'no spec'));
+    parts.push('<span class="lg-item lg-more">size = lines of code</span>');
     el.innerHTML = parts.join('');
   }
 
   try { drawTreemap(); buildLegend('tm-legend'); } catch(e){ note('tm-wrap', 'Treemap unavailable.'); }
-  try { drawSunburst(); buildLegend('sb-legend'); } catch(e){ note('sb-wrap', 'Sunburst unavailable.'); }
+  try { drawSunburst(); } catch(e){ note('sb-wrap', 'Sunburst unavailable.'); }
   try { drawQuadrant(); } catch(e){ note('qd-wrap', 'Quadrant unavailable.'); }
 })();
 </script>
