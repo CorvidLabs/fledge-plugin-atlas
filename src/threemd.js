@@ -14,7 +14,13 @@
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/\[\[z=([^\|\]]+)\|([^\]]+)\]\]/g, '<a class="xlink" data-z="$1">$2</a>');
-    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
+      const u = url.trim();
+      const scheme = (u.match(/^([a-z][a-z0-9+.\-]*):/i) || [])[1];
+      const safe = !scheme || /^(https?|mailto)$/i.test(scheme);
+      const href = (safe ? u : '#').replace(/"/g, '%22');
+      return '<a href="' + href + '" target="_blank" rel="noopener">' + text + '</a>';
+    });
     return s;
   }
   function mdToHtml(md){

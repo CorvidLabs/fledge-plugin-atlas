@@ -7,6 +7,7 @@
   const NS = 'http://www.w3.org/2000/svg';
   const mk = (t, cls) => { const e = document.createElementNS(NS, t); if(cls) e.setAttribute('class', cls); return e; };
   const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const files = Array.isArray(data.files) ? data.files : [];
   const specs = Array.isArray(data.specs) ? data.specs : [];
   const stats = data.stats || {};
@@ -112,7 +113,7 @@
       }
       const state = f.orphan ? 'no spec' : (f.overlap ? 'shared by 2+ specs' : 'has a spec');
       const tc = f.test_pct != null ? ' · ' + Math.round(f.test_pct) + '% tested' : '';
-      bindTip(host, tip, cell, ()=>`<b>${f.path.split('/').pop()}</b><span class="sub">${f.loc} LOC · ${f.lang}</span><span class="sub">${state}${tc}</span>`);
+      bindTip(host, tip, cell, ()=>`<b>${esc(f.path.split('/').pop())}</b><span class="sub">${f.loc} LOC · ${esc(f.lang)}</span><span class="sub">${esc(state)}${tc}</span>`);
       svg.appendChild(cell);
     });
   }
@@ -161,7 +162,7 @@
       inner.style.fill = seg.color;
       inner.style.fillOpacity = seg.kind === 'orphan' ? 1 : 0.9;
       const scov = seg.kind === 'orphan' ? 'no spec' : 'spec';
-      bindTip(host, tip, inner, ()=>`<b>${seg.label}</b><span class="sub">${scov} · ${Math.round(seg.value)} LOC</span><span class="sub">${seg.files.length} file(s)</span>`);
+      bindTip(host, tip, inner, ()=>`<b>${esc(seg.label)}</b><span class="sub">${scov} · ${Math.round(seg.value)} LOC</span><span class="sub">${seg.files.length} file(s)</span>`);
       svg.appendChild(inner);
 
       // outer arcs (this segment's files, sub-divided by file loc)
@@ -174,7 +175,7 @@
         o.setAttribute('d', arcPath(cx, cy, rMid+3, rOut, fa, fa+fspan));
         o.style.fill = f.orphan ? NOSPEC : (hasCov && f.test_pct != null ? covFill(f.test_pct) : 'var(--chart-1)');
         const tc = f.test_pct != null ? ' · ' + Math.round(f.test_pct) + '% tested' : '';
-        bindTip(host, tip, o, ()=>`<b>${f.path.split('/').pop()}</b><span class="sub">${f.loc} LOC${tc}</span><span class="sub">${f.orphan ? 'no spec' : seg.label}</span>`);
+        bindTip(host, tip, o, ()=>`<b>${esc(f.path.split('/').pop())}</b><span class="sub">${f.loc} LOC${tc}</span><span class="sub">${f.orphan ? 'no spec' : esc(seg.label)}</span>`);
         svg.appendChild(o);
         fa += fspan;
       });
@@ -267,7 +268,7 @@
       g.appendChild(t);
       const churnTxt = commitsKnown ? ((s.commits!=null?s.commits:0) + ' commits') : (s.updated || 'unknown');
       const covTxt = s.test_pct != null ? Math.round(s.test_pct) + '% tested' : Math.round(s.share_pct||0) + '% of code';
-      bindTip(host, tip, g, ()=>`<b>${s.module}</b><span class="sub">${churnTxt}</span><span class="sub">${covTxt}</span>`);
+      bindTip(host, tip, g, ()=>`<b>${esc(s.module)}</b><span class="sub">${churnTxt}</span><span class="sub">${covTxt}</span>`);
       svg.appendChild(g);
     });
   }

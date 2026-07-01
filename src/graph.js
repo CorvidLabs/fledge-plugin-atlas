@@ -240,14 +240,15 @@
       g.addEventListener('pointermove',move); g.addEventListener('pointerup',up);
     });
   }
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function showTip(n){
     if(n.kind==='spec'){
-      const bits=[`${n.fileCount} files`,`${n.loc} LOC`]; if(n.updated) bits.push('updated '+n.updated); if(n.commits!=null) bits.push(n.commits+' commits');
-      tip.innerHTML=`<b>${n.label}</b> spec${n.needs?' <span class="warnflag">needs review</span>':''}<span class="sub">${bits.join(' · ')}</span><span class="sub">click to focus</span>`;
+      const bits=[`${n.fileCount} files`,`${n.loc} LOC`]; if(n.updated) bits.push('updated '+esc(n.updated)); if(n.commits!=null) bits.push(n.commits+' commits');
+      tip.innerHTML=`<b>${esc(n.label)}</b> spec${n.needs?' <span class="warnflag">needs review</span>':''}<span class="sub">${bits.join(' · ')}</span><span class="sub">click to focus</span>`;
     } else {
-      const rel = n.orphan ? 'no spec' : n.specs.map(si=>data.specs[si].module).join(' + ');
+      const rel = n.orphan ? 'no spec' : n.specs.map(si=>esc(data.specs[si].module)).join(' + ');
       const tc = n.testPct==null ? '' : ` · ${Math.round(n.testPct)}% tested`;
-      tip.innerHTML=`<b>${n.name}</b><span class="sub">${n.loc} LOC · ${n.lang}${tc}</span><span class="sub">${rel}</span>`;
+      tip.innerHTML=`<b>${esc(n.name)}</b><span class="sub">${n.loc} LOC · ${esc(n.lang)}${tc}</span><span class="sub">${rel}</span>`;
     }
     tip.style.opacity=1;
   }
