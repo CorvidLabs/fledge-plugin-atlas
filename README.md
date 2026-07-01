@@ -58,6 +58,14 @@ Scrub the Z axis to walk the project forward through time.
   bubble to move it with its files. Click a bubble to focus just its subgraph.
   Dashed bubbles flag specs that likely need review. Color dots **by spec**,
   **by language**, **by recency**, or **by test coverage**.
+- **Spec dependency graph** — a directed DAG read from each spec's
+  `depends_on:` frontmatter. Every module is a node (sized by its lines of code,
+  tinted by its spec color); an arrow points from a spec to the module it
+  relies on, with foundational modules settling toward the bottom. Nodes many
+  specs lean on are ringed as **hubs**, and any dependency **cycle** is drawn in
+  red. Hover a node to trace what it needs and what needs it. If no spec
+  declares `depends_on`, a short note stands in for the graph. The same edges
+  are in `--json` under each spec's `depends_on` / `dependents`.
 - **Coverage** — share of lines of code under at least one spec.
 - **Overlap** — files claimed by more than one spec.
 - **Orphan code** — source files no spec references, largest first: the domain
@@ -128,8 +136,10 @@ field**, so it never has to infer the picture from raw numbers.
   covered_files, orphan_files, overlap_files, phantom_refs, coverage_pct,
   test_coverage_pct.
 - **`specs[]`** — each with governed file count, `test_pct`, `companions[]`
-  (with per-companion `updated`), and git activity: `updated` ("3d ago"),
-  `updated_ts`, `commits`, `heat` (0..1 recency).
+  (with per-companion `updated`), git activity: `updated` ("3d ago"),
+  `updated_ts`, `commits`, `heat` (0..1 recency), and its spec-to-spec
+  dependencies: `depends_on[]` (module names it declares, resolved to known
+  specs) and `dependents[]` (the reverse edges: specs that depend on it).
 - **`files[]`** (each with its governing `specs`, `orphan` / `overlap` flags,
   `test_pct`, `updated_ts`), and **`phantoms[]`**.
 

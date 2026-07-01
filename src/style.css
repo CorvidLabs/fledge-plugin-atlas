@@ -370,4 +370,30 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .specprose .prose code{font-family:var(--font-mono);font-size:.88em;color:var(--accent)}
 .specprose .prose pre.cb{background:var(--surface-strong);border:1px solid var(--line);padding:12px 14px;overflow-x:auto;margin:0 0 12px}
 .specprose .prose pre.cb code{color:var(--text);font-size:12px;line-height:1.5}
+/* spec dependency DAG */
+.maplegend .k.dep-spec{width:15px;height:15px;background:color-mix(in srgb,var(--accent) 26%,var(--bg));border:1.5px solid var(--accent)}
+.maplegend .k.dep-hub{width:14px;height:14px;background:color-mix(in srgb,var(--accent) 26%,var(--bg));border:1.5px solid var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent)}
+.maplegend .k.dep-cyc{width:15px;height:0;border-top:2px solid var(--danger)}
+.depgraph{position:relative;border:1px solid var(--line);background:radial-gradient(circle at 50% 30%,var(--surface),var(--bg));min-height:320px;overflow:hidden}
+#deps-svg{width:100%;height:auto;display:block;max-height:640px}
+#deps-svg .dep-edge{stroke:var(--line);stroke-width:1.4}
+#deps-svg .dep-edge.cyc{stroke-dasharray:5 4}
+#deps-svg .dep-edge.hot{stroke:var(--accent);stroke-width:2.2}
+#deps-svg .dep-arrow{fill:var(--muted)}
+#deps-svg .dep-arrow.hot{fill:var(--accent)}
+#deps-svg .dep-node{cursor:default}
+#deps-svg .dep-disc{stroke-width:1.6;fill-opacity:.92}
+#deps-svg .dep-ring{fill:none;stroke:var(--accent);stroke-width:1.4;stroke-opacity:.55}
+#deps-svg .dep-node.cyc .dep-disc{stroke-dasharray:4 3}
+#deps-svg .dep-label{font:600 12px var(--font-mono);paint-order:stroke;stroke:var(--bg);stroke-width:4px;pointer-events:none}
+#deps-svg.tracing .dep-node{opacity:.16}
+#deps-svg.tracing .dep-edge{opacity:.07}
+#deps-svg.tracing .dep-arrow{opacity:.07}
+#deps-svg.tracing .dep-node.lit{opacity:1}
+#deps-svg.tracing .dep-edge.hot{opacity:1}
+#deps-svg.tracing .dep-arrow.hot{opacity:1}
+.deps-note{font-family:var(--font-mono);font-size:12px;color:var(--muted);margin:14px 0 0;line-height:1.6;max-width:820px}
+.deps-note:not(.shown){display:none}
+.tip .hubflag{color:var(--accent);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-left:4px}
+.tip .cycflag,.deps-note .cycflag{color:var(--danger);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
 </style>
