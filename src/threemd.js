@@ -68,6 +68,26 @@
   // ---- call-to-action buttons ----
   const note = document.getElementById('act-note');
   function flash(msg){ if(!note) return; note.textContent = msg; note.classList.add('show'); setTimeout(()=>note.classList.remove('show'), 1800); }
+  const commas = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  // Build the same *.spec.md skeleton the `--scaffold` CLI flag prints, so the
+  // "Copy stub spec" button and an agent both start the first spec identically.
+  function stubSpec(c){
+    const files = (c.files||[]).map(f=>'  - '+f.path).join('\n');
+    const n = c.file_count || (c.files||[]).length;
+    return '---\n'
+      + 'module: '+c.module+'\n'
+      + 'status: draft\n'
+      + 'version: 0.1.0\n'
+      + 'owner: TODO\n'
+      + 'files:\n'+files+'\n'
+      + '---\n\n'
+      + '# '+c.module+' spec\n\n'
+      + '## Purpose\n\n'
+      + 'TODO: one paragraph on what `'+c.dir+'` does and why it exists ('+n+' file'+(n===1?'':'s')+', '+commas(c.loc)+' lines).\n\n'
+      + '## Requirements\n\n'
+      + '- TODO: a behaviour this module must guarantee.\n'
+      + '- TODO: another requirement, one per bullet.\n';
+  }
   async function copy(text, msg){
     try { await navigator.clipboard.writeText(text); flash(msg); }
     catch(e){
@@ -76,10 +96,15 @@
       ta.remove();
     }
   }
-  document.querySelectorAll('.actions .btn[data-act]').forEach(b=>{
+  document.querySelectorAll('.btn[data-act]').forEach(b=>{
     b.addEventListener('click', ()=>{
       const act = b.dataset.act;
       if(act==='copy-json'){ copy(dataEl.textContent, 'model JSON copied'); }
+      else if(act==='copy-stub'){
+        const c = (model.clusters||[])[0];
+        if(!c){ flash('no orphan cluster'); return; }
+        copy(stubSpec(c), c.module+'.spec.md copied');
+      }
       else if(act==='copy-verdict'){ copy(model.verdict||'', 'verdict copied'); }
       else if(act==='copy-review'){
         const rows = (model.specs||[]).filter(s=>s.needs_review).map(s=>`- ${s.module}: ${s.review_reason||'review'} (${s.path})`);

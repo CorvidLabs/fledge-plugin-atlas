@@ -119,6 +119,12 @@ struct Cli {
     /// coverage, ranked by uncovered lines. Needs an lcov report. For agents.
     #[arg(long)]
     gaps: bool,
+
+    /// Print a ready-to-save `*.spec.md` skeleton for the top-ranked orphan
+    /// cluster (valid frontmatter + Purpose/Requirements stubs, real file
+    /// paths) to stdout, so an agent can author the first spec unattended.
+    #[arg(long)]
+    scaffold: bool,
 }
 
 /// One parsed `*.spec.md`.
@@ -197,6 +203,9 @@ fn run() -> Result<()> {
     }
     if cli.gaps {
         return emit_gaps(&model);
+    }
+    if cli.scaffold {
+        return emit_scaffold(&model);
     }
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&model)?);
@@ -1684,6 +1693,13 @@ struct Model {
     stats: Stats,
     specs: Vec<SpecOut>,
     files: Vec<FileOut>,
+    /// Orphan files grouped by nearest directory, ranked by leverage. Empty
+    /// when nothing is undescribed. The headline for a spec-less project.
+    #[serde(default)]
+    clusters: Vec<ClusterOut>,
+    /// The project's language mix by LOC and file count, largest first.
+    #[serde(default)]
+    languages: Vec<LangOut>,
     phantoms: Vec<PhantomOut>,
     /// Daily commit activity split into spec vs code touches, when git history
     /// is available. Drives the contribution calendar.
@@ -2060,6 +2076,48 @@ struct FileOut {
     updated_ts: Option<i64>,
 }
 
+/// A group of orphan files rolled up into their nearest meaningful directory,
+/// so a single spec can adopt the whole cluster at once. Ranked by leverage.
+#[derive(Serialize)]
+struct ClusterOut {
+    /// Directory the orphan files roll up into, e.g. `crates/foo/src`.
+    dir: String,
+    /// Suggested `module:` name for a spec adopting this cluster.
+    module: String,
+    /// The cluster's orphan files, biggest first.
+    files: Vec<ClusterFile>,
+    /// Number of orphan files in the cluster.
+    file_count: usize,
+    /// Total lines of code across the cluster's files.
+    loc: usize,
+    /// Most-recent change across the cluster's files (unix ts), if git history.
+    updated_ts: Option<i64>,
+    /// Relative time of that most-recent change, e.g. `3d ago`.
+    updated: Option<String>,
+    /// Leverage = loc weighted toward recency; recent clusters rank higher.
+    leverage: f64,
+    /// Coverage ROI: the cluster's LOC as a share of total project LOC (0-100),
+    /// i.e. the coverage a single spec adopting it would add.
+    roi_pct: f64,
+}
+
+/// One orphan file inside a cluster.
+#[derive(Serialize)]
+struct ClusterFile {
+    path: String,
+    loc: usize,
+}
+
+/// The project's language mix, folded from `files[].lang` by LOC and count.
+#[derive(Serialize)]
+struct LangOut {
+    lang: &'static str,
+    loc: usize,
+    files: usize,
+    /// Share of total project LOC (0-100).
+    pct: f64,
+}
+
 #[derive(Serialize)]
 struct PhantomOut {
     spec: String,
@@ -2188,7 +2246,7 @@ fn build_model(
         .collect();
 
     let (mut hit_all, mut tot_all) = (0usize, 0usize);
-    let file_out = sources
+    let file_out: Vec<FileOut> = sources
         .iter()
         .map(|s| {
             let test_pct = s.test.map(|(h, t)| {
@@ -2385,6 +2443,28 @@ fn build_model(
         status_pts,
     });
 
+    // ---- Language mix (cheap orientation, folded from the file list) ----
+    let mut lang_map: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
+    for f in &file_out {
+        let e = lang_map.entry(f.lang).or_insert((0, 0));
+        e.0 += f.loc;
+        e.1 += 1;
+    }
+    let mut languages: Vec<LangOut> = lang_map
+        .into_iter()
+        .map(|(lang, (loc, files))| LangOut {
+            lang,
+            loc,
+            files,
+            pct: loc as f64 / total * 100.0,
+        })
+        .collect();
+    // Largest first; break ties by name for a stable order.
+    languages.sort_by(|a, b| b.loc.cmp(&a.loc).then_with(|| a.lang.cmp(b.lang)));
+
+    // ---- Orphan clusters (rolled up by nearest directory, ranked) ----
+    let clusters = build_clusters(&file_out, project, cov.total_loc, git.map(|g| g.now));
+
     Model {
         project: project.to_string(),
         verdict,
@@ -2405,11 +2485,249 @@ fn build_model(
         },
         specs: spec_out,
         files: file_out,
+        clusters,
+        languages,
         phantoms,
         calendar,
         pet,
         threemd: Vec::new(),
         trust: None,
+    }
+}
+
+/// Roll orphan files up into their nearest meaningful directory and rank the
+/// resulting clusters by leverage — total LOC weighted toward recent changes,
+/// so a spec-less project sees the highest-value directory to adopt first.
+/// `now` is the current unix time when git history is available (enables the
+/// recency weight); without it every cluster is weighted purely by LOC.
+fn build_clusters(
+    files: &[FileOut],
+    project: &str,
+    total_loc: usize,
+    now: Option<i64>,
+) -> Vec<ClusterOut> {
+    let mut groups: BTreeMap<String, Vec<&FileOut>> = BTreeMap::new();
+    for f in files.iter().filter(|f| f.orphan) {
+        groups.entry(cluster_dir(&f.path)).or_default().push(f);
+    }
+    let total = total_loc.max(1) as f64;
+    let mut clusters: Vec<ClusterOut> = groups
+        .into_iter()
+        .map(|(dir, mut members)| {
+            members.sort_by(|a, b| b.loc.cmp(&a.loc).then_with(|| a.path.cmp(&b.path)));
+            let loc: usize = members.iter().map(|f| f.loc).sum();
+            let updated_ts = members.iter().filter_map(|f| f.updated_ts).max();
+            // Recency weight in 0.5..1.5: a cluster touched today is worth 3x
+            // (per LOC) one untouched for a couple of months. Neutral (1.0)
+            // when there is no git history to date it.
+            let weight = match (now, updated_ts) {
+                (Some(n), Some(ts)) => {
+                    let age_days = ((n - ts).max(0) as f64) / 86_400.0;
+                    0.5 + 0.5f64.powf(age_days / 60.0)
+                }
+                _ => 1.0,
+            };
+            let module = cluster_module(&dir, project);
+            let cfiles = members
+                .iter()
+                .map(|f| ClusterFile {
+                    path: f.path.clone(),
+                    loc: f.loc,
+                })
+                .collect::<Vec<_>>();
+            ClusterOut {
+                dir,
+                module,
+                file_count: cfiles.len(),
+                files: cfiles,
+                loc,
+                updated_ts,
+                updated: now.zip(updated_ts).map(|(n, ts)| ago(ts, n)),
+                leverage: loc as f64 * weight,
+                roi_pct: loc as f64 / total * 100.0,
+            }
+        })
+        .collect();
+    // Highest leverage first; break ties by raw LOC, then directory name.
+    clusters.sort_by(|a, b| {
+        b.leverage
+            .total_cmp(&a.leverage)
+            .then_with(|| b.loc.cmp(&a.loc))
+            .then_with(|| a.dir.cmp(&b.dir))
+    });
+    clusters
+}
+
+/// The nearest directory a file rolls up into: its parent directory, or
+/// `(root)` for a file that sits at the project root.
+fn cluster_dir(path: &str) -> String {
+    match path.rfind('/') {
+        Some(i) => path[..i].to_string(),
+        None => "(root)".to_string(),
+    }
+}
+
+/// A sensible `module:` name for a cluster: the last meaningful path segment,
+/// ignoring a trailing `src`/`source`/`lib` wrapper, falling back to the
+/// project name for root-level or bare-source clusters.
+fn cluster_module(dir: &str, project: &str) -> String {
+    let mut cleaned = dir;
+    for suffix in ["/src", "/source", "/lib"] {
+        if let Some(stripped) = cleaned.strip_suffix(suffix) {
+            cleaned = stripped;
+        }
+    }
+    let last = cleaned.rsplit('/').next().unwrap_or("");
+    if last.is_empty() || last == "(root)" || last == "src" || last == "source" || last == "lib" {
+        project.to_string()
+    } else {
+        last.to_string()
+    }
+}
+
+/// Build a ready-to-save `*.spec.md` skeleton for a cluster: valid spec-sync
+/// frontmatter (module, draft status, seed version, owner placeholder, the
+/// cluster's real relative file paths) plus Purpose/Requirements stubs.
+fn scaffold_spec(cluster: &ClusterOut) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&format!("module: {}\n", cluster.module));
+    out.push_str("status: draft\n");
+    out.push_str("version: 0.1.0\n");
+    out.push_str("owner: TODO\n");
+    out.push_str("files:\n");
+    for f in &cluster.files {
+        out.push_str(&format!("  - {}\n", f.path));
+    }
+    out.push_str("---\n\n");
+    out.push_str(&format!("# {} spec\n\n", cluster.module));
+    out.push_str("## Purpose\n\n");
+    out.push_str(&format!(
+        "TODO: one paragraph on what `{}` does and why it exists ({} file{}, {} lines).\n\n",
+        cluster.dir,
+        cluster.file_count,
+        if cluster.file_count == 1 { "" } else { "s" },
+        commas(cluster.loc),
+    ));
+    out.push_str("## Requirements\n\n");
+    out.push_str("- TODO: a behaviour this module must guarantee.\n");
+    out.push_str("- TODO: another requirement, one per bullet.\n");
+    out
+}
+
+/// `--scaffold`: print a `*.spec.md` skeleton for the top-ranked orphan cluster
+/// to stdout so an agent can author the project's first spec unattended.
+fn emit_scaffold(model: &Model) -> Result<()> {
+    match model.clusters.first() {
+        Some(top) => {
+            print!("{}", scaffold_spec(top));
+            Ok(())
+        }
+        None => {
+            eprintln!(
+                "fledge atlas: nothing to scaffold; every source file is already under a spec."
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Render the orphan-cluster leverage board: each cluster of undescribed files
+/// as an expandable row with its file/LOC/recency and a coverage-ROI bar (the
+/// spec coverage a single spec adopting it would add). Highest leverage first.
+fn render_clusters(m: &Model) -> String {
+    let mut h = String::new();
+    h.push_str("<section class=\"block comp\" id=\"c-clusters\"><h2>Orphan clusters</h2>");
+    h.push_str("<p class=\"hint\">Undescribed files rolled up into the directory a single spec could adopt, highest leverage first (bigger and more recently changed ranks higher). The bar shows the spec coverage one spec would add. Open a cluster to see its files.</p>");
+    for (i, c) in m.clusters.iter().take(60).enumerate() {
+        let open = if i == 0 { " open" } else { "" };
+        let roi_w = c.roi_pct.clamp(0.0, 100.0);
+        let updated = c
+            .updated
+            .as_deref()
+            .map(|u| format!(" · {}", esc(u)))
+            .unwrap_or_default();
+        h.push_str(&format!("<details class=\"cluster comp\"{open}>"));
+        h.push_str(&format!(
+            "<summary><span class=\"cl-dir\">{}</span><span class=\"cl-meta\">{} file{} · {} lines{}</span>\
+             <span class=\"cl-roi\"><span class=\"cl-roibar\"><span class=\"cl-roifill\" style=\"width:{:.1}%\"></span></span><span class=\"cl-roinum\">+{:.1}% coverage</span></span></summary>",
+            esc(&c.dir),
+            c.file_count,
+            if c.file_count == 1 { "" } else { "s" },
+            commas(c.loc),
+            updated,
+            roi_w,
+            c.roi_pct,
+        ));
+        h.push_str("<table class=\"list\"><tbody>");
+        for f in c.files.iter().take(200) {
+            h.push_str(&format!(
+                "<tr><td>{}</td><td class=\"num\">{} lines</td></tr>",
+                esc(&f.path),
+                commas(f.loc)
+            ));
+        }
+        h.push_str("</tbody></table>");
+        if c.files.len() > 200 {
+            h.push_str(&format!(
+                "<p class=\"hint\">…and {} more.</p>",
+                c.files.len() - 200
+            ));
+        }
+        h.push_str("</details>");
+    }
+    h.push_str("</section>");
+    h
+}
+
+/// Render the one-line language-composition strip: a stacked bar plus a legend
+/// summarizing the language mix by LOC and file count, largest first.
+fn render_langstrip(m: &Model) -> String {
+    let mut h = String::new();
+    h.push_str("<section class=\"block comp langstrip\" id=\"c-langs\"><h2>Language mix</h2>");
+    h.push_str("<div class=\"langbar\">");
+    for (i, l) in m.languages.iter().enumerate() {
+        let color = lang_color(i);
+        h.push_str(&format!(
+            "<span class=\"langseg\" style=\"width:{:.2}%;background:{color}\" title=\"{} · {} lines · {} file{}\"></span>",
+            l.pct,
+            esc(l.lang),
+            commas(l.loc),
+            l.files,
+            if l.files == 1 { "" } else { "s" }
+        ));
+    }
+    h.push_str("</div>");
+    h.push_str("<p class=\"langlegend\">");
+    let parts: Vec<String> = m
+        .languages
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            format!(
+                "<span class=\"langkey\"><span class=\"kk\" style=\"background:{}\"></span>{} {} LOC ({})</span>",
+                lang_color(i),
+                esc(l.lang),
+                commas(l.loc),
+                l.files
+            )
+        })
+        .collect();
+    h.push_str(&parts.join(" "));
+    h.push_str("</p></section>");
+    h
+}
+
+/// Brand chart token for the language strip, cycling through the five chart
+/// colours then a muted fill for the long tail.
+fn lang_color(i: usize) -> &'static str {
+    match i {
+        0 => "var(--chart-1)",
+        1 => "var(--chart-2)",
+        2 => "var(--chart-3)",
+        3 => "var(--chart-4)",
+        4 => "var(--chart-5)",
+        _ => "var(--surface-strong)",
     }
 }
 
@@ -2916,14 +3234,23 @@ fn render_html(m: &Model) -> Result<String> {
     let mut orphans: Vec<&FileOut> = m.files.iter().filter(|f| f.orphan).collect();
     orphans.sort_by_key(|f| std::cmp::Reverse(f.loc));
 
+    // Orphan code is the headline for a spec-poor project: when coverage is low
+    // the cluster leverage board sits up top; otherwise it drops next to the
+    // orphan list so healthy projects lead with their strengths.
+    let clusters_top = !m.clusters.is_empty() && s.coverage_pct < 50.0;
+
     // ---- Component show/hide bar (lists only the sections we actually emit) ----
-    let mut comps: Vec<(&str, &str)> = vec![
-        ("c-verdict", "verdict"),
-        ("c-delta", "since last visit"),
-        ("c-glance", "at a glance"),
-        ("c-vitals", "vitals"),
-        ("c-pet", "pet"),
-    ];
+    let mut comps: Vec<(&str, &str)> = vec![("c-verdict", "verdict")];
+    if !m.languages.is_empty() {
+        comps.push(("c-langs", "languages"));
+    }
+    if clusters_top {
+        comps.push(("c-clusters", "spec clusters"));
+    }
+    comps.push(("c-delta", "since last visit"));
+    comps.push(("c-glance", "at a glance"));
+    comps.push(("c-vitals", "vitals"));
+    comps.push(("c-pet", "pet"));
     if m.stats.has_history {
         comps.push(("c-activity", "activity"));
     }
@@ -2931,6 +3258,9 @@ fn render_html(m: &Model) -> Result<String> {
         comps.push(("c-calendar", "calendar"));
     }
     if !orphans.is_empty() {
+        if !clusters_top && !m.clusters.is_empty() {
+            comps.push(("c-clusters", "spec clusters"));
+        }
         comps.push(("c-orphans", "needs a spec"));
     }
     comps.push(("c-graph", "spec map"));
@@ -2977,6 +3307,9 @@ fn render_html(m: &Model) -> Result<String> {
     if !orphans.is_empty() {
         h.push_str("<button class=\"btn\" data-act=\"copy-orphans\">Copy orphan paths</button>");
     }
+    if !m.clusters.is_empty() {
+        h.push_str("<button class=\"btn\" data-act=\"copy-stub\">Copy stub spec</button>");
+    }
     if !m.threemd.is_empty() {
         h.push_str("<button class=\"btn\" data-act=\"go-3md\">View 3md docs</button>");
     }
@@ -2991,6 +3324,17 @@ fn render_html(m: &Model) -> Result<String> {
             "<p class=\"rest\">All {} source files ({} lines) are undescribed. Add a <code>*.spec.md</code> that lists the files it governs to start mapping the project.</p>",
             s.source_files, commas(s.total_loc)
         ));
+        if let Some(top) = m.clusters.first() {
+            h.push_str(&format!(
+                "<p class=\"rest\">Best place to start: <code>{}</code> ({} file{}, {} lines). The button below copies a ready-to-save <code>{}.spec.md</code> stub for it.</p>",
+                esc(&top.dir),
+                top.file_count,
+                if top.file_count == 1 { "" } else { "s" },
+                commas(top.loc),
+                esc(&top.module),
+            ));
+            h.push_str("<p class=\"cta\"><button class=\"btn primary\" data-act=\"copy-stub\">Copy stub spec</button></p>");
+        }
     } else {
         h.push_str(&format!(
             "<p class=\"big\"><b>{:.0}%</b> of {}'s code is covered by a spec.</p>",
@@ -3037,6 +3381,16 @@ fn render_html(m: &Model) -> Result<String> {
         s.covered_files, s.source_files, kloc(s.covered_loc), kloc(s.orphan_loc)
     ));
     h.push_str("</section>");
+
+    // ---- Language & composition strip (cheap orientation for every project) ----
+    if !m.languages.is_empty() {
+        h.push_str(&render_langstrip(m));
+    }
+
+    // ---- Orphan clusters (up top when coverage is low: the headline) ----
+    if clusters_top {
+        h.push_str(&render_clusters(m));
+    }
 
     // ---- Since you last looked (localStorage-driven, filled by since.js) ----
     h.push_str("<section class=\"block comp\" id=\"c-delta\"><h2>Since you last looked</h2>");
@@ -3237,6 +3591,11 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str("</div></div></div>");
         h.push_str("<p class=\"legend callegend\"><span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>spec &nbsp; <span class=\"heatkey\" style=\"background:var(--chart-3)\"></span>code &nbsp; <span class=\"heatkey\" style=\"background:var(--chart-4)\"></span>both &nbsp; <span class=\"heatkey\" style=\"background:var(--surface-strong)\"></span>no commits</p>");
         h.push_str("</section>");
+    }
+
+    // ---- Orphan clusters (down here for healthier projects) ----
+    if !clusters_top && !m.clusters.is_empty() {
+        h.push_str(&render_clusters(m));
     }
 
     // ---- What needs a spec (the action list) ----
