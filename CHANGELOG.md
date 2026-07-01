@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.1.1] - 2026-07-01
+
+### Other
+
+- Update: drop zero-LOC languages, bump 'no spec' gray for contrast (4c0308b)
+- Fix: undefined --danger token; align graph with governance key (4ef7042)
+- Update: colour treemap/sunburst by governance state, one clean legend (59319aa)
+- Update: readable treemap labels + colour legend for treemap and sunburst (280add4)
+- Update: colour treemap and sunburst by spec ownership (e6a6631)
+- Fix: eliminate content overflow across components and widths (2e4b2fc)
+
 ## [v0.1.0] - 2026-07-01
 
 ### Other
