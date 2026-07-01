@@ -1,6 +1,6 @@
 [package]
 name = "fledge-plugin-atlas"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.89"
 description = "Local HTML atlas of a project: spec coverage, code, and how specs and source overlap."

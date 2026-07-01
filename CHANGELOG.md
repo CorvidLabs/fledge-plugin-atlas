@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.2] - 2026-07-01
+
+### Other
+
+- Docs: add live trust-panel demo (augur + attest) (cef0e6a)
+- Docs: dogfood spec-sync, add self-atlas demo, refresh README (09a69e0)
+
 ## [v0.1.1] - 2026-07-01
 
 ### Other
