@@ -1,9 +1,10 @@
 # fledge-plugin-atlas
 
-A local, self-contained **atlas of a project's specs, code, and how they overlap** —
-so you can look at a codebase an agent has been building and actually see what is
-there: which specs govern which files, how much of the code is under contract,
-what is untested, and what has drifted.
+🗺️ Render your project's specs, code, and their overlap as a single
+self-contained interactive HTML **atlas**, for humans, plus the same model as
+JSON, for agents. Look at a codebase an agent has been building and actually see
+what is there: which specs govern which files, how much of the code is under
+contract, what is untested, and what has drifted.
 
 One command produces a single HTML file (no server, no CDN, no network) built
 around an interactive force-directed graph, plus the same model as JSON for
@@ -29,17 +30,17 @@ fledge atlas -o report.html  # choose the output path
 
 This repo dogfoods what it measures. Its own [`specs/`](specs/) describe every
 source file, so `fledge atlas` run here reports **100% of the code under a spec,
-0 orphans, 0 phantoms** — the screenshots below are that self-atlas. (Optional:
+0 orphans, 0 phantoms**: the screenshots below are that self-atlas. (Optional:
 [`augur`](https://github.com/CorvidLabs/augur) and
 [`attest`](https://github.com/CorvidLabs/attest) light up the trust panel when
 they have data; neither is required to build or run the atlas.)
 
-The spec and code graph — each `*.spec.md` is a bubble, the files it governs are
+The spec and code graph: each `*.spec.md` is a bubble, the files it governs are
 the dots inside, coloured by governance:
 
 ![Spec and code graph](docs/graph.png)
 
-The spec dependency DAG, read from each spec's `depends_on:` — every visual
+The spec dependency DAG, read from each spec's `depends_on:`. Every spec here
 depends on the `engine`, which settles to the bottom as the hub:
 
 ![Spec dependency graph](docs/depgraph.png)
@@ -80,19 +81,19 @@ Scrub the Z axis to walk the project forward through time.
 
 ## What it shows
 
-- **Spec & code graph** — two lenses on the same data:
-  - **Grouped (default)** — each spec is a translucent **bubble** and the code
+- **Spec & code graph**: two lenses on the same data:
+  - **Grouped (default)**: each spec is a translucent **bubble** and the code
     files it governs are the **dots inside** it. A file shared by two specs sits
     where their bubbles overlap; files with no spec float outside. Reads as
     territory: you see at a glance what each spec owns and where they intersect.
-  - **Network** — specs and files as nodes joined by edges, for tracing one
+  - **Network**: specs and files as nodes joined by edges, for tracing one
     exact relationship.
   Both pan (drag background), zoom (scroll / buttons / fit), search, and drag a
   bubble to move it with its files. Click a bubble to focus just its subgraph.
   Dashed bubbles flag specs that likely need review. Colour dots **by
   governance** (the default: has a spec / shared by 2+ / no spec), or **by
   spec**, **by language**, **by recency**, or **by test coverage**.
-- **Spec dependency graph** — a directed DAG read from each spec's
+- **Spec dependency graph**: a directed DAG read from each spec's
   `depends_on:` frontmatter. Every module is a node (sized by its lines of code,
   tinted by its spec color); an arrow points from a spec to the module it
   relies on, with foundational modules settling toward the bottom. Nodes many
@@ -100,54 +101,54 @@ Scrub the Z axis to walk the project forward through time.
   red. Hover a node to trace what it needs and what needs it. If no spec
   declares `depends_on`, a short note stands in for the graph. The same edges
   are in `--json` under each spec's `depends_on` / `dependents`.
-- **Coverage** — share of lines of code under at least one spec.
-- **Overlap** — files claimed by more than one spec.
-- **Orphan code** — source files no spec references, largest first: the domain
+- **Coverage**: share of lines of code under at least one spec.
+- **Overlap**: files claimed by more than one spec.
+- **Orphan code**: source files no spec references, largest first: the domain
   no contract describes.
-- **Orphan clusters** — those orphan files rolled up into the nearest directory
+- **Orphan clusters**: those orphan files rolled up into the nearest directory
   a single spec could adopt, ranked by leverage (total LOC weighted toward
   recent changes) with a coverage-ROI bar showing the coverage one spec would
   add. The headline for a spec-less project, plus a **Copy stub spec** button
   (and the `--scaffold` flag) that hands you a ready-to-save `*.spec.md`.
-- **Language mix** — a one-line stacked strip of the language composition by
+- **Language mix**: a one-line stacked strip of the language composition by
   lines of code and file count, cheap orientation for any project. In `--json`
   under `languages`; clusters are under `clusters`.
-- **Phantom references** — files a spec declares that are *missing on disk*: a
-  drift signal. (Files that exist but are not code — configs, docs — are counted
-  as non-code governed files, not phantoms.)
-- **Test coverage overlay** — when an lcov report is present (see below), per
+- **Phantom references**: files a spec declares that are *missing on disk*: a
+  drift signal. (Files that exist but are not code, such as configs and docs, are
+  counted as non-code governed files, not phantoms.)
+- **Test coverage overlay**: when an lcov report is present (see below), per
   file, per spec, and overall test coverage is layered onto the atlas.
-- **Spec activity heat map** — when the project is a git repo, each spec is
+- **Spec activity heat map**: when the project is a git repo, each spec is
   dated from its footprint (spec doc + companions + governed files): a hot→cold
   heat map of most-recently-changed to most-stale, with commit counts, plus a
   "by recency" graph color mode. Each spec's **companion docs** (requirements.md,
   tasks.md, context.md, testing.md) are listed with their own last-changed date.
 
-- **Project vitals** — a cockpit of the numbers that matter (spec coverage,
+- **Project vitals**: a cockpit of the numbers that matter (spec coverage,
   test coverage, orphans, overlap, broken refs, specs needing review) up top.
-- **Spec-debt scoreboard** — every spec ranked worst-first by a 0 to 100 debt
+- **Spec-debt scoreboard**: every spec ranked worst-first by a 0 to 100 debt
   score (needs-review, spec-sync drift, low test coverage, staleness, missing
   companions), with a bar that breaks the score into its factors.
-- **Since you last looked** — remembers your last visit in the browser and
+- **Since you last looked**: remembers your last visit in the browser and
   lists which specs changed since, so a returning reviewer sees the delta first.
-- **Delight views** — a **codebase treemap** (files sized by lines, coloured by
+- **Delight views**: a **codebase treemap** (files sized by lines, coloured by
   governance: teal has a spec, amber shared by 2+ specs, gray none, or a
   clay-to-green coverage tint when tests are known), a **coverage sunburst**
   (specs to the files they govern), and a **churn vs coverage** quadrant that
   flags the high-change, low-coverage corner. All three share one legend; which
   spec owns a file is on hover.
-- **Trust and provenance** — auto-detected, shown only when the sibling tools
+- **Trust and provenance**: auto-detected, shown only when the sibling tools
   have data: [`augur`](https://github.com/CorvidLabs/augur)'s current change-risk
   verdict, and recent [`attest`](https://github.com/CorvidLabs/attest)
   attestations (reviewer, verdict, confidence) read straight from git notes.
   Also in `--json` under `trust` when present.
-- **Corvid Pet** — a gamified, **stateless** desk-crow whose level, mood, and
+- **Corvid Pet**: a gamified, **stateless** desk-crow whose level, mood, and
   stage (🥚 Egg → ✨ Legendary Corvid) are pure functions of the repo scan + git,
   so it's always accurate with no saved state. Specs feed it, coverage is its
   health, a commit streak levels it up, orphans and broken references make it
   hungry or sick. Also in `--json` under `pet` (with `mood`, `stats`, `drivers`,
   `next_goal`) so an agent can report the project's "vibe" too.
-- **Show/hide bar** — every section above is a component with a toggle in the
+- **Show/hide bar**: every section above is a component with a toggle in the
   sticky bar at the top; your choices persist in the browser.
 
 ## How it reads a project
@@ -173,33 +174,33 @@ field**, so it never has to infer the picture from raw numbers.
 
 `fledge atlas --json` prints:
 
-- **`verdict`** — one plain sentence, identical to what the HTML shows a human,
+- **`verdict`**: one plain sentence, identical to what the HTML shows a human,
   e.g. *"69% of merlin's code is covered by a spec. 180 files (51,277 lines)
   have no spec; the biggest is …"*. An agent can relay it verbatim.
-- **`health`** — `"healthy"` | `"some gaps"` | `"large gaps"` | `"no specs yet"`.
-- **`stats`** — specs, source_files, total_loc, covered_loc, orphan_loc,
+- **`health`**: `"healthy"` | `"some gaps"` | `"large gaps"` | `"no specs yet"`.
+- **`stats`**: specs, source_files, total_loc, covered_loc, orphan_loc,
   covered_files, orphan_files, overlap_files, phantom_refs, coverage_pct,
   test_coverage_pct.
-- **`specs[]`** — each with governed file count, `test_pct`, `companions[]`
+- **`specs[]`**: each with governed file count, `test_pct`, `companions[]`
   (with per-companion `updated`), git activity: `updated` ("3d ago"),
   `updated_ts`, `commits`, `heat` (0..1 recency), and its spec-to-spec
   dependencies: `depends_on[]` (module names it declares, resolved to known
   specs) and `dependents[]` (the reverse edges: specs that depend on it).
 - **`files[]`** (each with its governing `specs`, `orphan` / `overlap` flags,
   `test_pct`, `updated_ts`), and **`phantoms[]`**.
-- **`action_plan[]`** — an ordered, machine-readable TODO list for an agent,
+- **`action_plan[]`**: an ordered, machine-readable TODO list for an agent,
   assembled deterministically from the fields above and sorted by `severity`
   (0..100) descending. Each entry is `{ kind, target, severity, why, command }`:
-  - **`kind`** — one of `"fix_ref"` (a spec points at a missing file),
+  - **`kind`**: one of `"fix_ref"` (a spec points at a missing file),
     `"review_spec"` (a needs-review spec), `"write_spec"` (a large orphan file
     with no spec), or `"add_tests"` (a spec-covered file under 100% test
     coverage, from the same logic as `--gaps`).
-  - **`target`** — the spec module or source file the action operates on.
-  - **`severity`** — priority on a 0..100 scale; broken references outrank
+  - **`target`**: the spec module or source file the action operates on.
+  - **`severity`**: priority on a 0..100 scale; broken references outrank
     review work, which outranks writing specs for big orphans, then coverage
     gaps. The array is sorted by this, highest first.
-  - **`why`** — a plain-language reason, safe to relay to a human verbatim.
-  - **`command`** — the exact next command to run, e.g.
+  - **`why`**: a plain-language reason, safe to relay to a human verbatim.
+  - **`command`**: the exact next command to run, e.g.
     `fledge atlas <proj> --spec <module>` or `fledge atlas <proj> --owns <path>`.
 
   This hands an agent an ordered worklist with the precise next command for each
