@@ -1685,6 +1685,11 @@ struct Model {
     specs: Vec<SpecOut>,
     files: Vec<FileOut>,
     phantoms: Vec<PhantomOut>,
+    /// An ordered, machine-readable TODO list for an agent: needs-review specs,
+    /// broken references, orphan files, and coverage gaps, each with the exact
+    /// next `fledge` command. Sorted by `severity` descending, fully derived
+    /// from the fields above so it never disagrees with the rest of the model.
+    action_plan: Vec<Action>,
     /// Daily commit activity split into spec vs code touches, when git history
     /// is available. Drives the contribution calendar.
     calendar: Option<Calendar>,
@@ -2066,6 +2071,133 @@ struct PhantomOut {
     file: String,
 }
 
+/// One ordered TODO for an agent: what to do, to which target, why it matters,
+/// and the exact `fledge` command to run next. Assembled purely from the same
+/// facts the atlas already computes (needs-review specs, broken references,
+/// orphan files, and coverage gaps), so it is fully deterministic and appears in
+/// `--json` as `action_plan`, sorted by `severity` (0..100) descending.
+#[derive(Serialize)]
+struct Action {
+    /// Stable machine key: "fix_ref" | "review_spec" | "write_spec" | "add_tests".
+    kind: &'static str,
+    /// What the action operates on: a spec module name or a source file path.
+    target: String,
+    /// Priority on a 0..100 scale; the plan is sorted by this, highest first.
+    severity: f64,
+    /// Plain-language reason, safe to relay to a human verbatim.
+    why: String,
+    /// The exact next command to run, e.g. `fledge atlas <proj> --spec <module>`.
+    command: String,
+}
+
+/// Assemble the deterministic agent action plan from already-computed model
+/// facts. Order of assembly does not matter: the result is sorted by severity
+/// descending with a stable `(kind, target)` tiebreak. Severities are chosen so
+/// concrete breakage (broken references) outranks review work, which outranks
+/// writing specs for large orphans, which outranks coverage gaps.
+fn build_action_plan(
+    project: &str,
+    specs: &[SpecOut],
+    files: &[FileOut],
+    phantoms: &[PhantomOut],
+    total_loc: f64,
+    has_test: bool,
+) -> Vec<Action> {
+    let total = total_loc.max(1.0);
+    let round1 = |x: f64| (x * 10.0).round() / 10.0;
+    let mut plan: Vec<Action> = Vec::new();
+
+    // Broken references are concrete, on-disk breakage: highest priority.
+    for p in phantoms {
+        plan.push(Action {
+            kind: "fix_ref",
+            target: p.file.clone(),
+            severity: 88.0,
+            why: "spec references a missing file".to_string(),
+            command: format!("fledge atlas {project} --spec {}", p.spec),
+        });
+    }
+
+    // Every spec flagged for review, weighted by how much code it governs and
+    // how recently that code churned.
+    for s in specs {
+        if !s.needs_review {
+            continue;
+        }
+        let heat = s.heat.unwrap_or(0.0);
+        let severity = round1((45.0 + s.share_pct + heat * 20.0).clamp(0.0, 85.0));
+        plan.push(Action {
+            kind: "review_spec",
+            target: s.module.clone(),
+            severity,
+            why: s
+                .review_reason
+                .clone()
+                .unwrap_or_else(|| "review suggested".to_string()),
+            command: format!("fledge atlas {project} --spec {}", s.module),
+        });
+    }
+
+    // The biggest orphan files: code no spec describes. Bigger orphans first.
+    let mut orphans: Vec<&FileOut> = files.iter().filter(|f| f.orphan).collect();
+    orphans.sort_by(|a, b| b.loc.cmp(&a.loc).then(a.path.cmp(&b.path)));
+    for f in orphans.into_iter().take(8) {
+        let severity = round1(((f.loc as f64 / total * 100.0) * 1.5 + 15.0).clamp(0.0, 78.0));
+        plan.push(Action {
+            kind: "write_spec",
+            target: f.path.clone(),
+            severity,
+            why: format!(
+                "{} line{} under no spec",
+                f.loc,
+                if f.loc == 1 { "" } else { "s" }
+            ),
+            command: format!("fledge atlas {project} --owns {}", f.path),
+        });
+    }
+
+    // Spec-covered files under 100% test coverage, mirroring the `--gaps` logic.
+    // Orphan files are excluded here since their action is already `write_spec`.
+    if has_test {
+        let mut gaps: Vec<(f64, &FileOut, f64)> = files
+            .iter()
+            .filter(|f| !f.orphan)
+            .filter_map(|f| {
+                let pct = f.test_pct?;
+                if pct >= 100.0 {
+                    return None;
+                }
+                let uncovered = f.loc as f64 * (1.0 - pct / 100.0);
+                Some((uncovered, f, pct))
+            })
+            .collect();
+        gaps.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.path.cmp(&b.1.path)));
+        for (uncovered, f, pct) in gaps.into_iter().take(8) {
+            let n = uncovered.round() as i64;
+            let severity = round1(((uncovered / total * 100.0) * 1.5 + 10.0).clamp(0.0, 72.0));
+            plan.push(Action {
+                kind: "add_tests",
+                target: f.path.clone(),
+                severity,
+                why: format!(
+                    "{n} line{} uncovered by tests ({pct:.0}% covered)",
+                    if n == 1 { "" } else { "s" }
+                ),
+                command: format!("fledge atlas {project} --owns {}", f.path),
+            });
+        }
+    }
+
+    // Deterministic order: severity desc, then a stable (kind, target) tiebreak.
+    plan.sort_by(|a, b| {
+        b.severity
+            .total_cmp(&a.severity)
+            .then(a.kind.cmp(b.kind))
+            .then(a.target.cmp(&b.target))
+    });
+    plan
+}
+
 fn build_model(
     project: &str,
     specs: &[Spec],
@@ -2188,7 +2320,7 @@ fn build_model(
         .collect();
 
     let (mut hit_all, mut tot_all) = (0usize, 0usize);
-    let file_out = sources
+    let file_out: Vec<FileOut> = sources
         .iter()
         .map(|s| {
             let test_pct = s.test.map(|(h, t)| {
@@ -2385,6 +2517,16 @@ fn build_model(
         status_pts,
     });
 
+    // Deterministic agent TODO list, assembled from the facts just computed.
+    let action_plan = build_action_plan(
+        project,
+        &spec_out,
+        &file_out,
+        &phantoms,
+        cov.total_loc as f64,
+        test_coverage_pct.is_some(),
+    );
+
     Model {
         project: project.to_string(),
         verdict,
@@ -2406,6 +2548,7 @@ fn build_model(
         specs: spec_out,
         files: file_out,
         phantoms,
+        action_plan,
         calendar,
         pet,
         threemd: Vec::new(),
@@ -2896,6 +3039,127 @@ fn run_augur_json(root: &Path, timeout: Duration) -> Option<Vec<u8>> {
     }
 }
 
+/// One row of the risk-hotspots worklist: a spec or file scored by fusing churn,
+/// size, and risk, with the contributing factors kept for display. `score` is
+/// normalized to 0..100 across the ranked set (the top item is 100).
+struct Hotspot {
+    /// "spec" | "file".
+    kind: &'static str,
+    /// Primary label: a spec module name or a file path.
+    label: String,
+    /// Optional mono sub-line (the spec doc path); empty for files.
+    path: String,
+    /// Fused score, normalized to 0..100 (highest is 100).
+    score: f64,
+    /// Recency 0..1 used as the churn factor (0 when history is unknown).
+    churn: f64,
+    loc: usize,
+    /// Risk chips: (label, chart token), e.g. ("needs review", "--chart-5").
+    tags: Vec<(&'static str, &'static str)>,
+}
+
+/// Fuse the model's churn, size, and risk signals into a single ranked worklist,
+/// upgrading the churn-vs-coverage quadrant into a deterministic "fix these
+/// first" list. Specs use `heat`/`share`/`needs_review`/`drift`/`test_pct`;
+/// files use `loc`/recency/`orphan`/`test_pct`. When git history is absent the
+/// churn factor falls back to a neutral 1.0 so ranking degrades to size * risk.
+/// Ties break on `(kind, label)`, so the order is fully reproducible.
+fn compute_hotspots(m: &Model) -> Vec<Hotspot> {
+    let has_hist = m.stats.has_history;
+    // Recency scale for files, from their last-change timestamps.
+    let ts: Vec<i64> = m.files.iter().filter_map(|f| f.updated_ts).collect();
+    let (fmin, fmax) = (
+        ts.iter().copied().min().unwrap_or(0),
+        ts.iter().copied().max().unwrap_or(0),
+    );
+    let file_heat = |t: Option<i64>| -> f64 {
+        match t {
+            Some(v) if fmax > fmin => (v - fmin) as f64 / (fmax - fmin) as f64,
+            _ => 0.0,
+        }
+    };
+    let cov_pen = |pct: Option<f64>, default: f64| -> f64 {
+        pct.map(|p| (100.0 - p) / 100.0 * 0.8).unwrap_or(default)
+    };
+
+    let mut raw: Vec<(f64, Hotspot)> = Vec::new();
+
+    for s in &m.specs {
+        let heat = s.heat.unwrap_or(0.0);
+        let risk = 1.0
+            + if s.needs_review { 1.0 } else { 0.0 }
+            + if s.drift.is_some() { 0.6 } else { 0.0 }
+            + cov_pen(s.test_pct, 0.3);
+        let hfactor = if has_hist { heat } else { 1.0 };
+        let mut tags: Vec<(&'static str, &'static str)> = Vec::new();
+        if s.needs_review {
+            tags.push(("needs review", "--chart-5"));
+        }
+        if s.drift.is_some() {
+            tags.push(("drift", "--chart-1"));
+        }
+        if s.test_pct.is_some_and(|p| p < 80.0) {
+            tags.push(("low tests", "--chart-2"));
+        }
+        raw.push((
+            hfactor * s.loc as f64 * risk,
+            Hotspot {
+                kind: "spec",
+                label: s.module.clone(),
+                path: s.path.clone(),
+                score: 0.0,
+                churn: heat,
+                loc: s.loc,
+                tags,
+            },
+        ));
+    }
+
+    for f in &m.files {
+        let heat = file_heat(f.updated_ts);
+        let risk = 1.0
+            + if f.orphan { 1.0 } else { 0.0 }
+            + cov_pen(f.test_pct, if f.orphan { 0.0 } else { 0.3 });
+        let hfactor = if has_hist { heat } else { 1.0 };
+        let mut tags: Vec<(&'static str, &'static str)> = Vec::new();
+        if f.orphan {
+            tags.push(("no spec", "--chart-5"));
+        }
+        if f.test_pct.is_some_and(|p| p < 80.0) {
+            tags.push(("low tests", "--chart-2"));
+        }
+        raw.push((
+            hfactor * f.loc as f64 * risk,
+            Hotspot {
+                kind: "file",
+                label: f.path.clone(),
+                path: String::new(),
+                score: 0.0,
+                churn: heat,
+                loc: f.loc,
+                tags,
+            },
+        ));
+    }
+
+    let max = raw.iter().map(|(s, _)| *s).fold(0.0_f64, f64::max);
+    for (s, hs) in raw.iter_mut() {
+        hs.score = if max > 0.0 { *s / max * 100.0 } else { 0.0 };
+    }
+    let mut out: Vec<Hotspot> = raw
+        .into_iter()
+        .map(|(_, hs)| hs)
+        .filter(|hs| hs.score > 0.0 && hs.loc > 0)
+        .collect();
+    out.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(a.kind.cmp(b.kind))
+            .then(a.label.cmp(&b.label))
+    });
+    out
+}
+
 fn render_html(m: &Model) -> Result<String> {
     // Embed the exact model the graph draws. Escape `</` so a path can never
     // break out of the <script> block.
@@ -2942,6 +3206,12 @@ fn render_html(m: &Model) -> Result<String> {
     }
     if !m.specs.is_empty() {
         comps.push(("c-quadrant", "churn vs coverage"));
+    }
+    if !m.specs.is_empty() || !m.files.is_empty() {
+        comps.push(("c-hotspots", "hotspots"));
+    }
+    if !m.action_plan.is_empty() {
+        comps.push(("c-plan", "action plan"));
     }
     if !m.specs.is_empty() {
         comps.push(("c-specs", "specs"));
@@ -3322,6 +3592,90 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str("<p class=\"hint\">Each spec plotted by how much it changes against how well it is covered. Specs in the shaded \"watch\" corner change a lot but are thinly covered, so they earn a second look.</p>");
         h.push_str("<div class=\"delight\" id=\"qd-wrap\"><svg id=\"qd-svg\" role=\"img\" aria-label=\"Churn versus coverage scatter plot\"></svg><div id=\"qd-tip\" class=\"tip\"></div></div>");
         h.push_str("</section>");
+    }
+
+    // ---- Risk hotspots: one ranked "fix these first" worklist ----
+    let hotspots = compute_hotspots(m);
+    if !hotspots.is_empty() {
+        h.push_str("<section class=\"block comp\" id=\"c-hotspots\"><h2>Risk hotspots</h2>");
+        h.push_str("<p class=\"hint\">One ranked worklist that fuses churn, size, and risk into a single score (0 to 100, highest first). Risk rises with orphan code, low test coverage, needs-review, and drift. It turns the churn-vs-coverage quadrant into a deterministic \"fix these first\" list.</p>");
+        h.push_str("<table class=\"hstable\"><thead><tr><th>item</th><th class=\"num\">score</th><th class=\"hsfachead\">churn / size / risk</th></tr></thead><tbody>");
+        for hs in hotspots.iter().take(12) {
+            h.push_str("<tr>");
+            h.push_str("<td class=\"hsitem\">");
+            h.push_str(&format!(
+                "<span class=\"hskind {}\">{}</span>",
+                hs.kind, hs.kind
+            ));
+            h.push_str(&format!("<span class=\"hsname\">{}</span>", esc(&hs.label)));
+            if !hs.path.is_empty() {
+                h.push_str(&format!("<span class=\"hspath\">{}</span>", esc(&hs.path)));
+            }
+            h.push_str("</td>");
+            let tone = if hs.score >= 66.0 {
+                "warn"
+            } else if hs.score <= 20.0 {
+                "good"
+            } else {
+                ""
+            };
+            h.push_str(&format!(
+                "<td class=\"num hsscore {tone}\">{:.0}</td>",
+                hs.score.round()
+            ));
+            h.push_str("<td class=\"hsfaccell\"><div class=\"hsfac\">");
+            h.push_str(&format!(
+                "<span class=\"hsmini\" title=\"churn {:.0}%\"><span style=\"width:{:.1}%;background:var(--chart-3)\"></span></span>",
+                hs.churn * 100.0,
+                hs.churn * 100.0
+            ));
+            h.push_str(&format!("<span class=\"hssize\">{}</span>", kloc(hs.loc)));
+            for (label, token) in &hs.tags {
+                h.push_str(&format!(
+                    "<span class=\"hstag\" style=\"border-color:color-mix(in srgb,var({token}) 45%,transparent);color:var({token})\">{label}</span>"
+                ));
+            }
+            h.push_str("</div></td>");
+            h.push_str("</tr>");
+        }
+        h.push_str("</tbody></table>");
+        h.push_str("<p class=\"legend hslegend\">\
+<span class=\"heatkey\" style=\"background:var(--chart-3)\"></span>churn &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-5)\"></span>needs review / no spec &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-2)\"></span>low tests &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>drift</p>");
+        h.push_str("</section>");
+    }
+
+    // ---- Agent action plan (a compact view of the JSON action_plan) ----
+    if !m.action_plan.is_empty() {
+        h.push_str("<section class=\"block comp\" id=\"c-plan\"><h2>Agent action plan</h2>");
+        h.push_str("<p class=\"hint\">An ordered, deterministic worklist for an agent, highest severity first. Every row carries the exact next command to run. This is the same list <code>--json</code> emits as <code>action_plan</code>.</p>");
+        h.push_str("<ol class=\"planlist\">");
+        for a in m.action_plan.iter().take(10) {
+            let tone = if a.severity >= 80.0 { "warn" } else { "" };
+            let kind_label = match a.kind {
+                "fix_ref" => "fix ref",
+                "review_spec" => "review spec",
+                "write_spec" => "write spec",
+                "add_tests" => "add tests",
+                other => other,
+            };
+            h.push_str("<li class=\"planrow\">");
+            h.push_str(&format!(
+                "<span class=\"plansev {tone}\">{:.0}</span>",
+                a.severity.round()
+            ));
+            h.push_str(&format!("<span class=\"plankind\">{kind_label}</span>"));
+            h.push_str(&format!(
+                "<span class=\"plantarget\">{}</span>",
+                esc(&a.target)
+            ));
+            h.push_str(&format!("<span class=\"planwhy\">{}</span>", esc(&a.why)));
+            h.push_str(&format!("<code class=\"plancmd\">{}</code>", esc(&a.command)));
+            h.push_str("</li>");
+        }
+        h.push_str("</ol></section>");
     }
 
     // ---- 3md documents (inline scrubber) ----

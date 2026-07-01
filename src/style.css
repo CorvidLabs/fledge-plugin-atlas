@@ -334,4 +334,35 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .trust-verdict{font-size:11px;text-transform:uppercase;letter-spacing:.06em}
 .trust-verdict.good{color:var(--success)}.trust-verdict.warn{color:var(--warn)}.trust-verdict.bad{color:var(--bad)}
 .trust-none{color:var(--faint)}
+/* risk hotspots: ranked "fix these first" worklist */
+.hstable{border-collapse:collapse;width:100%;font-size:14px}
+.hstable th{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
+.hstable th.num{text-align:right}
+.hstable td{border-bottom:1px solid var(--line);padding:9px 12px;vertical-align:middle}
+.hsitem{display:flex;flex-direction:column;gap:2px;min-width:180px}
+.hskind{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--faint);border:1px solid var(--line);padding:1px 6px;align-self:flex-start}
+.hskind.spec{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.hskind.file{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 40%,transparent)}
+.hsname{font-family:var(--font-mono);font-size:13px;color:var(--text);word-break:break-all}
+.hspath{font-family:var(--font-mono);font-size:11px;color:var(--faint);word-break:break-all}
+.hsscore{text-align:right;font-family:var(--font-mono);font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted);width:60px}
+.hsscore.warn{color:var(--warn)}
+.hsscore.good{color:var(--accent)}
+.hsfachead{width:50%}
+.hsfaccell{width:50%}
+.hsfac{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hsmini{display:inline-block;width:64px;height:8px;background:var(--surface-strong);border:1px solid var(--line);overflow:hidden}
+.hsmini span{display:block;height:100%}
+.hssize{font-family:var(--font-mono);font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums;min-width:44px}
+.hstag{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:2px 7px;border:1px solid var(--line)}
+.hslegend .heatkey{border:1px solid var(--line)}
+/* agent action plan: compact view of the JSON action_plan */
+.planlist{list-style:none;margin:0;padding:0;counter-reset:plan}
+.planrow{display:grid;grid-template-columns:auto auto 1fr;grid-template-areas:"sev kind target" "sev why why" "sev cmd cmd";gap:3px 12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.plansev{grid-area:sev;font-family:var(--font-mono);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted);width:40px;text-align:right;align-self:start}
+.plansev.warn{color:var(--warn)}
+.plankind{grid-area:kind;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:1px 7px;justify-self:start}
+.plantarget{grid-area:target;font-family:var(--font-mono);font-size:13px;color:var(--text);word-break:break-all}
+.planwhy{grid-area:why;color:var(--muted);font-size:13px;line-height:1.45}
+.plancmd{grid-area:cmd;font-family:var(--font-mono);font-size:12px;color:var(--text);background:var(--surface-strong);padding:4px 9px;justify-self:start;word-break:break-all}
 </style>
