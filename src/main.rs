@@ -1498,20 +1498,17 @@ fn render_pet(p: &Pet) -> String {
             "<div class=\"pbar\"><span class=\"pblab\">{label}</span><span class=\"pbtrack\"><span class=\"pbfill {cls}\" style=\"width:{val}%\"></span></span><span class=\"pbval\">{val}</span></div>"
         )
     };
-    let crow = "<svg class=\"crow\" viewBox=\"0 0 120 120\" role=\"img\" aria-label=\"Corvid pet\">\
-<g class=\"crow-legs\"><line x1=\"52\" y1=\"92\" x2=\"49\" y2=\"110\"/><line x1=\"64\" y1=\"92\" x2=\"67\" y2=\"110\"/></g>\
-<polygon class=\"crow-tail\" points=\"34,74 6,60 28,80 10,90 36,86\"/>\
-<path class=\"crow-body\" d=\"M34,74 L40,52 L58,42 L78,48 L84,70 L72,92 L46,94 Z\"/>\
-<path class=\"crow-wing\" d=\"M50,60 L76,70 L52,82 L58,68 Z\"/>\
-<g class=\"crow-head\">\
-<path class=\"crow-body\" d=\"M64,32 L84,34 L92,46 L86,58 L68,58 L62,46 Z\"/>\
-<polygon class=\"crow-beak\" points=\"92,42 110,47 92,53\"/>\
-<circle class=\"crow-eye\" cx=\"80\" cy=\"44\" r=\"3.4\"/>\
-<circle class=\"crow-pupil\" cx=\"81\" cy=\"44\" r=\"1.5\"/>\
+    // The official CorvidLabs mark (logo-mark.svg): one circle body, a triangular
+    // beak, an eye dot. Animated for the pet's moods; the eye takes the teal
+    // accent to read as alive. Silhouette flips with the theme.
+    let crow = "<svg class=\"crow\" viewBox=\"0 0 64 64\" role=\"img\" aria-label=\"Corvid pet\">\
+<g class=\"crow-burst\"><rect x=\"17\" y=\"3\" width=\"3.5\" height=\"3.5\"/><rect x=\"30\" y=\"0\" width=\"3.5\" height=\"3.5\"/><rect x=\"43\" y=\"4\" width=\"3.5\" height=\"3.5\"/></g>\
+<g class=\"crow-z\"><text x=\"45\" y=\"14\">z</text><text x=\"53\" y=\"7\">z</text></g>\
+<g class=\"crow-mark\">\
+<circle class=\"crow-body\" cx=\"24\" cy=\"32\" r=\"18\"/>\
+<path class=\"crow-beak\" d=\"M33 21.5 L58.5 29.5 L33 39.5 Z\"/>\
 </g>\
-<polygon class=\"crow-tuft\" points=\"66,82 76,78 72,92\"/>\
-<g class=\"crow-z\"><text x=\"94\" y=\"30\">z</text><text x=\"104\" y=\"20\">z</text></g>\
-<g class=\"crow-burst\"><rect x=\"52\" y=\"20\" width=\"5\" height=\"5\"/><rect x=\"72\" y=\"16\" width=\"5\" height=\"5\"/><rect x=\"88\" y=\"24\" width=\"5\" height=\"5\"/></g>\
+<g class=\"crow-eye-g\"><circle class=\"crow-eye\" cx=\"27.5\" cy=\"26\" r=\"3.4\"/><circle class=\"crow-pupil\" cx=\"28.4\" cy=\"26\" r=\"1.4\"/></g>\
 </svg>";
     format!(
         "<section class=\"block comp petcard\" id=\"c-pet\" data-mood=\"{mood}\">\

@@ -174,19 +174,13 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 /* ---- Corvid pet ---- */
 .petcard .petwrap{display:flex;gap:26px;align-items:center;border:1px solid var(--line);background:var(--surface);padding:20px 24px}
 .petart{flex:0 0 auto;width:150px;height:150px;display:flex;align-items:center;justify-content:center}
-.crow{width:150px;height:150px;overflow:visible}
-.crow-body,.crow-wing,.crow-tail{fill:var(--text)}
-.crow-wing{fill:var(--surface-strong)}
-.crow-tail{fill:var(--muted)}
-.crow-beak{fill:var(--warn)}
+.crow{width:130px;height:130px;overflow:visible}
+.crow-body,.crow-beak{fill:var(--text)}
 .crow-eye{fill:var(--accent)}
 .crow-pupil{fill:var(--bg)}
-.crow-tuft{fill:var(--accent)}
-.crow-legs line{stroke:var(--muted);stroke-width:2.5}
-.crow-z text{fill:var(--faint);font-family:var(--font-mono);font-size:13px;opacity:0}
-.crow-burst rect{fill:var(--accent);opacity:0}
-.crow-head{transform-origin:74px 48px}
-.crow-eye{transform-origin:80px 44px}
+.crow-eye-g{transform-box:fill-box;transform-origin:center}
+.crow-z text{fill:var(--faint);font-family:var(--font-mono);font-size:9px;opacity:0;transform-box:fill-box}
+.crow-burst rect{fill:var(--accent);opacity:0;transform-box:fill-box}
 .petinfo{flex:1 1 auto;min-width:0}
 .pethead{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
 .petstage{font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--text)}
@@ -205,25 +199,25 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .pbval{font-family:var(--font-mono);font-size:11px;color:var(--muted);width:22px;text-align:right}
 .petgoal{font-size:13px;color:var(--muted);margin:0}
 /* poses (CSS-only, mood-driven) */
-.crow-eye{animation:blink 5s infinite}
-@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.12)}}
+.crow-eye-g{animation:blink 5s infinite}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
 .pet--content .crow,.pet--okay .crow{animation:bob 4s ease-in-out infinite}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .pet--celebrating .crow{animation:hop .9s ease-in-out infinite}
-@keyframes hop{0%,100%{transform:translateY(0)}30%{transform:translateY(-9px)}45%{transform:translateY(0)}}
+@keyframes hop{0%,100%{transform:translateY(0)}30%{transform:translateY(-11px) rotate(-3deg)}45%{transform:translateY(0)}}
 .pet--celebrating .crow-burst rect{animation:burst 1.1s ease-out infinite}
 .pet--celebrating .crow-burst rect:nth-child(2){animation-delay:.15s}
 .pet--celebrating .crow-burst rect:nth-child(3){animation-delay:.3s}
-@keyframes burst{0%{opacity:0;transform:translateY(6px)}30%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}
-.pet--sleepy .crow-eye,.pet--sleepy .crow-pupil{transform:scaleY(.08)}
+@keyframes burst{0%{opacity:0;transform:translateY(5px)}30%{opacity:1}100%{opacity:0;transform:translateY(-11px)}}
+.pet--sleepy .crow-eye-g{transform:scaleY(.1);animation:none}
 .pet--sleepy .crow{animation:breathe 3.5s ease-in-out infinite}
 @keyframes breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}
 .pet--sleepy .crow-z text{animation:zdrift 3s ease-out infinite}
 .pet--sleepy .crow-z text:nth-child(2){animation-delay:1.4s}
-@keyframes zdrift{0%{opacity:0;transform:translate(0,4px)}25%{opacity:.9}100%{opacity:0;transform:translate(6px,-14px)}}
-.pet--hungry .crow-head{animation:peck 1.6s ease-in-out infinite}
-@keyframes peck{0%,70%,100%{transform:rotate(0)}80%{transform:rotate(14deg)}}
-.pet--sick .crow-body,.pet--sick .crow-wing{fill:var(--success)}
+@keyframes zdrift{0%{opacity:0;transform:translate(0,4px)}25%{opacity:.9}100%{opacity:0;transform:translate(5px,-11px)}}
+.pet--hungry .crow{animation:peck 1.5s ease-in-out infinite;transform-origin:bottom center}
+@keyframes peck{0%,68%,100%{transform:rotate(0)}82%{transform:rotate(10deg)}}
+.pet--sick .crow-body,.pet--sick .crow-beak{fill:var(--success)}
 .pet--sick .crow{animation:shudder 2.4s ease-in-out infinite;opacity:.85}
 @keyframes shudder{0%,100%{transform:rotate(0)}25%{transform:rotate(-2deg)}75%{transform:rotate(2deg)}}
 @media (prefers-reduced-motion:reduce){.crow,.crow *{animation:none!important}}
