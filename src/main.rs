@@ -3181,17 +3181,18 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     if m.trust.is_some() {
         comps.push(("c-trust", "trust"));
     }
+    h.push_str("<a class=\"skip-link\" href=\"#content\">Skip to content</a>");
     h.push_str("<nav class=\"compbar\" id=\"compbar\" aria-label=\"Sections\"><span class=\"cblabel\">show</span>");
     for (id, label) in &comps {
         h.push_str(&format!(
-            "<button class=\"cbtoggle on\" data-target=\"{id}\">{label}</button>"
+            "<button class=\"cbtoggle on\" data-target=\"{id}\" aria-pressed=\"true\">{label}</button>"
         ));
     }
     h.push_str("</nav>");
 
     // ---- Call-to-action bar ----
     let review_n = m.specs.iter().filter(|sp| sp.needs_review).count();
-    h.push_str("<div class=\"actions\">");
+    h.push_str("<div class=\"actions\" id=\"content\" tabindex=\"-1\">");
     h.push_str("<button class=\"btn primary\" data-act=\"copy-json\">Copy model JSON</button>");
     h.push_str("<button class=\"btn\" data-act=\"copy-verdict\">Copy verdict</button>");
     if review_n > 0 {
@@ -3501,28 +3502,28 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     h.push_str("</div>");
     // toolbar row 1: search + focus + zoom
     h.push_str("<div class=\"gtools\">");
-    h.push_str("<input id=\"g-search\" type=\"search\" placeholder=\"Search specs and files…\" autocomplete=\"off\">");
+    h.push_str("<input id=\"g-search\" type=\"search\" aria-label=\"Search specs and files\" placeholder=\"Search specs and files…\" autocomplete=\"off\">");
     h.push_str("<span id=\"g-count\" class=\"gcount\"></span>");
     h.push_str("<button id=\"g-focus\" class=\"gchip\" style=\"display:none\">focus: <span></span> ✕</button>");
     h.push_str("<span class=\"gspace\"></span>");
-    h.push_str("<span class=\"lmode\"><button data-layout=\"grouped\" class=\"on\" title=\"Bubbles: specs contain their files\">grouped</button><button data-layout=\"network\" title=\"Network: specs and files linked by edges\">network</button></span>");
+    h.push_str("<span class=\"lmode\" role=\"group\" aria-label=\"Graph layout\"><button data-layout=\"grouped\" class=\"on\" aria-pressed=\"true\" title=\"Bubbles: specs contain their files\">grouped</button><button data-layout=\"network\" aria-pressed=\"false\" title=\"Network: specs and files linked by edges\">network</button></span>");
     h.push_str("<button id=\"g-zout\" title=\"Zoom out\">−</button><button id=\"g-zin\" title=\"Zoom in\">+</button><button id=\"g-fit\" title=\"Fit to view\">fit</button>");
     h.push_str("</div>");
     // toolbar row 2: filters + color modes
     h.push_str("<div class=\"controls\">");
     h.push_str("<label><input type=\"checkbox\" id=\"t-orphans\"> show files with no spec</label>");
     h.push_str("<label><input type=\"checkbox\" id=\"t-labels\"> file names</label>");
-    h.push_str("<span class=\"cmode\">color: <button data-mode=\"spec\" class=\"on\">by spec</button><button data-mode=\"lang\">by language</button>");
+    h.push_str("<span class=\"cmode\" role=\"group\" aria-label=\"Node color mode\">color: <button data-mode=\"spec\" class=\"on\" aria-pressed=\"true\">by spec</button><button data-mode=\"lang\" aria-pressed=\"false\">by language</button>");
     if m.stats.has_history {
-        h.push_str("<button data-mode=\"age\">by recency</button>");
+        h.push_str("<button data-mode=\"age\" aria-pressed=\"false\">by recency</button>");
     }
     if m.stats.test_coverage_pct.is_some() {
-        h.push_str("<button data-mode=\"cov\">by test coverage</button>");
+        h.push_str("<button data-mode=\"cov\" aria-pressed=\"false\">by test coverage</button>");
     }
     h.push_str("</span>");
     h.push_str("<button id=\"g-reset\" class=\"reset\">reset</button>");
     h.push_str("</div>");
-    h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"img\" aria-label=\"Spec and code relationship graph\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
+    h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"application\" aria-roledescription=\"Interactive spec and code graph\" aria-label=\"Spec and code relationship graph\" aria-describedby=\"graph-summary\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
     h.push_str("</div></details>");
 
     // ---- Codebase treemap (files sized by lines) ----

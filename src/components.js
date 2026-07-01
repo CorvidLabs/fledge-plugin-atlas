@@ -7,7 +7,8 @@
   try { hidden = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch(e){}
   function set(id, show){
     var el = document.getElementById(id); if(el) el.style.display = show ? '' : 'none';
-    var btn = bar.querySelector('[data-target="' + id + '"]'); if(btn) btn.classList.toggle('on', show);
+    var btn = bar.querySelector('[data-target="' + id + '"]');
+    if(btn){ btn.classList.toggle('on', show); btn.setAttribute('aria-pressed', show ? 'true' : 'false'); }
   }
   bar.querySelectorAll('.cbtoggle').forEach(function(btn){
     var id = btn.dataset.target;

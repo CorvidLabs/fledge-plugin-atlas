@@ -12,6 +12,9 @@
   let vb = { x:0, y:0, w:W, h:H };
   const setVB = () => svgEl.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
   setVB();
+  // Respect the user's motion preference: when reduced, we skip the animated
+  // settle everywhere and jump straight to the synchronous prewarmed layout.
+  const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   // ---- colour scales: brand tokens only, theme-aware via color-mix ----
   const CHART = ['--chart-1','--chart-2','--chart-3','--chart-4','--chart-5'];
@@ -85,9 +88,22 @@
   let layout = 'grouped';
   let focused = null;
   let activeSpecs = [], activeFiles = [], activeLinks = [];
+  // Roving tabindex: exactly one node is in the Tab order at a time; arrows walk the rest.
+  let focusables = [], focusIndex = -1;
 
   const gBub = mk('g'), gLinks = mk('g'), gNodes = mk('g');
   svgEl.appendChild(gBub); svgEl.appendChild(gLinks); svgEl.appendChild(gNodes);
+
+  // Off-screen text summary so AT users get the gist without traversing every node.
+  const summaryEl = document.createElement('div');
+  summaryEl.id = 'graph-summary';
+  summaryEl.className = 'sr-only';
+  const plur = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  summaryEl.textContent = `Interactive spec and code graph: ${plur(specNodes.length, 'spec')}, ` +
+    `${plur(fileNodes.length, 'file')}, ${plur(orphanCount, 'orphan')} with no spec. ` +
+    `Press Tab to enter the graph, then use the arrow keys to move between nodes, ` +
+    `Enter or Space on a spec to focus its subgraph, and Escape to clear focus.`;
+  if (svgEl.parentNode) svgEl.parentNode.insertBefore(summaryEl, svgEl.nextSibling);
 
   const colorOf = f => colorMode==='cov' ? f.covColor : colorMode==='age' ? f.ageColor : colorMode==='lang' ? f.langColor : f.specColor;
 
@@ -144,7 +160,44 @@
     }
     if(layout==='grouped') layoutOrphans();
     applyLabels(); applySearch();
+    collectFocusables();
   }
+
+  // ---- keyboard: roving tabindex across nodes ----
+  function collectFocusables(){
+    focusables = Array.prototype.slice.call(gNodes.querySelectorAll('.node'));
+    focusIndex = focusables.length ? 0 : -1;
+    focusables.forEach((g,i)=>g.setAttribute('tabindex', i===0 ? '0' : '-1'));
+  }
+  function setRovingTo(g){
+    const i = focusables.indexOf(g); if(i<0) return;
+    focusables.forEach((el,j)=>el.setAttribute('tabindex', j===i ? '0' : '-1'));
+    focusIndex = i;
+  }
+  function focusAt(i){
+    if(!focusables.length) return;
+    i = (i + focusables.length) % focusables.length;
+    focusables.forEach((el,j)=>el.setAttribute('tabindex', j===i ? '0' : '-1'));
+    focusIndex = i; focusables[i].focus();
+  }
+  function moveFocus(delta){ if(focusables.length) focusAt((focusIndex<0?0:focusIndex)+delta); }
+  gNodes.addEventListener('keydown',e=>{
+    const g = e.target && e.target.closest ? e.target.closest('.node') : null; if(!g) return;
+    const n = g.__node;
+    switch(e.key){
+      case 'ArrowRight': case 'ArrowDown': e.preventDefault(); moveFocus(1); break;
+      case 'ArrowLeft': case 'ArrowUp': e.preventDefault(); moveFocus(-1); break;
+      case 'Home': e.preventDefault(); focusAt(0); break;
+      case 'End': e.preventDefault(); focusAt(focusables.length-1); break;
+      case 'Enter': case ' ': case 'Spacebar':
+        e.preventDefault();
+        if(n && n.kind==='spec'){ focusSpec(n.idx); focusAt(0); }
+        break;
+      case 'Escape':
+        if(focused!=null){ e.preventDefault(); clearFocus(); focusAt(0); }
+        break;
+    }
+  });
 
   function layoutOrphans(){
     const orphans = activeFiles.filter(f=>f.orphan); if(!orphans.length) return;
@@ -214,23 +267,41 @@
   function prewarm(){ const it = layout==='grouped'?200:260; for(let i=0;i<it;i++){ tick(Math.max(1-i/it,0.05)); } if(layout==='grouped') layoutOrphans(); draw(); }
   let alpha=0, raf=null;
   function loop(){ alpha*=0.985; tick(Math.max(alpha,0.02)); if(layout==='grouped') layoutOrphans(); draw(); if(alpha>0.05) raf=requestAnimationFrame(loop); else raf=null; }
-  function reheat(a=0.5){ alpha=a; if(!raf) raf=requestAnimationFrame(loop); }
+  // With reduced motion we skip the animated settle and re-settle synchronously.
+  function reheat(a=0.5){ if(reduceMotion){ prewarm(); return; } alpha=a; if(!raf) raf=requestAnimationFrame(loop); }
 
   function toSvg(e){ const r=svgEl.getBoundingClientRect(); return { x: vb.x+(e.clientX-r.left)/r.width*vb.w, y: vb.y+(e.clientY-r.top)/r.height*vb.h }; }
 
-  // ---- hover trace + drag/click ----
+  // ---- hover/focus trace + drag/click ----
+  // Shared highlight logic so keyboard focus and mouse hover behave identically.
+  function enter(n,g){
+    svgEl.classList.add('trace'); g.classList.add('lit');
+    if(n.kind==='spec' && n.t) n.t.style.display=''; // reveal a hidden small-bubble label
+    nbr[n.id].forEach(id=>{ const m=byId[id]; if(m&&m.g) m.g.classList.add('lit'); });
+    if(layout==='network') for(const l of activeLinks){ if(l.source===n.id||l.target===n.id) l.el.classList.add('hot'); }
+    showTip(n);
+  }
+  function leave(){
+    svgEl.classList.remove('trace');
+    [...activeSpecs,...activeFiles].forEach(m=>m.g&&m.g.classList.remove('lit'));
+    activeLinks.forEach(l=>l.el&&l.el.classList.remove('hot')); tip.style.opacity=0;
+  }
+  // Position the tooltip next to a node centre (used on keyboard focus, no pointer).
+  function tipAtNode(g){
+    const gr=svgEl.getBoundingClientRect(), b=g.getBoundingClientRect();
+    tip.style.left=(b.left-gr.left+b.width/2+14)+'px';
+    tip.style.top=(b.top-gr.top+b.height/2+14)+'px';
+  }
   function wire(n,g){
-    g.addEventListener('mouseenter',()=>{
-      svgEl.classList.add('trace'); g.classList.add('lit');
-      if(n.kind==='spec' && n.t) n.t.style.display=''; // reveal a hidden small-bubble label
-      nbr[n.id].forEach(id=>{ const m=byId[id]; if(m&&m.g) m.g.classList.add('lit'); });
-      if(layout==='network') for(const l of activeLinks){ if(l.source===n.id||l.target===n.id) l.el.classList.add('hot'); }
-      showTip(n);
-    });
+    g.__node = n;
+    g.setAttribute('tabindex','-1');
+    if(n.kind==='spec') g.setAttribute('role','button');
+    g.setAttribute('aria-label', describe(n)); // screen-reader announces LOC/%tested/owning specs
+    g.addEventListener('mouseenter',()=>enter(n,g));
     g.addEventListener('mousemove',moveTip);
-    g.addEventListener('mouseleave',()=>{ svgEl.classList.remove('trace');
-      [...activeSpecs,...activeFiles].forEach(m=>m.g&&m.g.classList.remove('lit'));
-      activeLinks.forEach(l=>l.el&&l.el.classList.remove('hot')); tip.style.opacity=0; });
+    g.addEventListener('mouseleave',leave);
+    g.addEventListener('focus',()=>{ setRovingTo(g); enter(n,g); tipAtNode(g); });
+    g.addEventListener('blur',leave);
     g.addEventListener('pointerdown',(e)=>{
       e.stopPropagation(); e.preventDefault(); g.setPointerCapture(e.pointerId);
       let moved=0; const start=toSvg(e);
@@ -241,6 +312,18 @@
     });
   }
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // Plain-text equivalent of the tooltip, used as the node's accessible name.
+  function describe(n){
+    if(n.kind==='spec'){
+      const bits=[plur(n.fileCount,'file'), n.loc+' LOC'];
+      if(n.updated) bits.push('updated '+n.updated);
+      if(n.commits!=null) bits.push(plur(n.commits,'commit'));
+      return `Spec ${n.label}${n.needs?', needs review':''}. ${bits.join(', ')}. Activate to focus this spec.`;
+    }
+    const rel = n.orphan ? 'no owning spec' : 'owned by '+n.specs.map(si=>data.specs[si].module).join(' and ');
+    const tc = n.testPct==null ? '' : `, ${Math.round(n.testPct)} percent tested`;
+    return `File ${n.name}, ${n.loc} LOC, ${n.lang}${tc}, ${rel}.`;
+  }
   function showTip(n){
     if(n.kind==='spec'){
       const bits=[`${n.fileCount} files`,`${n.loc} LOC`]; if(n.updated) bits.push('updated '+esc(n.updated)); if(n.commits!=null) bits.push(n.commits+' commits');
@@ -299,15 +382,19 @@
 
   // ---- controls ----
   const $=id=>document.getElementById(id);
+  // Keep aria-pressed of a toggle group in sync with its `.on` class.
+  const syncPressed=sel=>document.querySelectorAll(sel).forEach(x=>x.setAttribute('aria-pressed', x.classList.contains('on')?'true':'false'));
   const ob=$('t-orphans'); if(ob){ ob.checked=showOrphans; ob.addEventListener('change',()=>{ showOrphans=ob.checked; build(); prewarm(); fit(); }); }
   const lb=$('t-labels'); if(lb){ lb.addEventListener('change',()=>{ showLabels=lb.checked; applyLabels(); }); }
   document.querySelectorAll('.cmode button').forEach(b=>b.addEventListener('click',()=>{
     document.querySelectorAll('.cmode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); colorMode=b.dataset.mode;
+    syncPressed('.cmode button');
     activeFiles.forEach(f=>{ f.shape.style.fill=colorOf(f); });
   }));
   document.querySelectorAll('.lmode button').forEach(b=>b.addEventListener('click',()=>{
     if(b.dataset.layout===layout) return;
     document.querySelectorAll('.lmode button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    syncPressed('.lmode button');
     layout=b.dataset.layout; if(layout==='network'){ seedPositions(); } build(); prewarm(); fit();
   }));
   const search=$('g-search'); if(search){ search.addEventListener('input',()=>{ query=search.value.trim().toLowerCase(); applySearch(); });
@@ -317,6 +404,7 @@
   if($('g-fit')) $('g-fit').addEventListener('click',fit);
   if($('g-reset')) $('g-reset').addEventListener('click',()=>{ focused=null; query=''; if(search)search.value=''; layout='grouped';
     document.querySelectorAll('.lmode button').forEach(x=>x.classList.toggle('on',x.dataset.layout==='grouped'));
+    syncPressed('.lmode button');
     seedPositions(); build(); prewarm(); fit(); updateFocusChip(); });
   if($('g-focus')) $('g-focus').addEventListener('click',clearFocus);
 
@@ -324,6 +412,7 @@
   if(['spec','lang','cov','age'].includes(hash)){ const b=document.querySelector(`.cmode button[data-mode="${hash}"]`);
     if(b){ document.querySelectorAll('.cmode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); colorMode=hash; } }
 
+  syncPressed('.lmode button'); syncPressed('.cmode button');
   build(); prewarm(); fit();
 })();
 </script>
