@@ -133,7 +133,7 @@
     const line = mk('line', 'dep-edge' + (cyc ? ' cyc' : ''));
     line.setAttribute('x1', sx); line.setAttribute('y1', sy);
     line.setAttribute('x2', ex); line.setAttribute('y2', ey);
-    if(cyc) line.style.stroke = 'var(--danger)';
+    if(cyc) line.style.stroke = 'var(--bad)';
     gEdges.appendChild(line);
 
     // manual arrowhead (fill via style so CSS vars resolve, matching graph.js)
@@ -144,7 +144,7 @@
     const p3 = (ex - ux*ah - px*aw) + ',' + (ey - uy*ah - py*aw);
     const head = mk('polygon', 'dep-arrow' + (cyc ? ' cyc' : ''));
     head.setAttribute('points', p1 + ' ' + p2 + ' ' + p3);
-    head.style.fill = cyc ? 'var(--danger)' : 'var(--muted)';
+    head.style.fill = cyc ? 'var(--bad)' : 'var(--muted)';
     gArrows.appendChild(head);
 
     const rec = { el: line, head: head, from: e.from, to: e.to, cyc: cyc };

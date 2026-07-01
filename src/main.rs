@@ -4193,7 +4193,7 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     h.push_str("<p class=\"hint\">Each spec is a bubble; the code files it governs are the dots inside it. A file shared by two specs sits where their bubbles overlap. Files with no spec float outside. Click a bubble to focus it, drag it to move it, drag the background to pan, scroll to zoom.</p>");
     h.push_str("<div class=\"maplegend\">");
     h.push_str("<span><span class=\"k spec\"></span>spec (bubble)</span>");
-    h.push_str("<span><span class=\"k file\"></span>code file</span>");
+    h.push_str("<span><span class=\"k file\"></span>has a spec</span>");
     h.push_str("<span><span class=\"k shared\"></span>shared by 2+ specs</span>");
     h.push_str("<span><span class=\"k gray\"></span>no spec</span>");
     h.push_str("</div>");
@@ -4210,7 +4210,7 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     h.push_str("<div class=\"controls\">");
     h.push_str("<label><input type=\"checkbox\" id=\"t-orphans\"> show files with no spec</label>");
     h.push_str("<label><input type=\"checkbox\" id=\"t-labels\"> file names</label>");
-    h.push_str("<span class=\"cmode\" role=\"group\" aria-label=\"Node color mode\">color: <button data-mode=\"spec\" class=\"on\" aria-pressed=\"true\">by spec</button><button data-mode=\"lang\" aria-pressed=\"false\">by language</button>");
+    h.push_str("<span class=\"cmode\" role=\"group\" aria-label=\"Node color mode\">color: <button data-mode=\"gov\" class=\"on\" aria-pressed=\"true\">by governance</button><button data-mode=\"spec\" aria-pressed=\"false\">by spec</button><button data-mode=\"lang\" aria-pressed=\"false\">by language</button>");
     if m.stats.has_history {
         h.push_str("<button data-mode=\"age\" aria-pressed=\"false\">by recency</button>");
     }

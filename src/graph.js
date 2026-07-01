@@ -23,8 +23,11 @@
     const mix = 100 - (Math.floor(i/CHART.length)%3)*22;
     LANGC[l] = `color-mix(in srgb, var(${CHART[i%CHART.length]}) ${mix}%, var(--bg))`;
   });
-  const NOSPEC = 'var(--surface-strong)';
-  const covColor = pct => pct==null ? NOSPEC : `color-mix(in srgb, var(--chart-4) ${Math.round(pct)}%, var(--danger))`; // 0 clay -> 100 green
+  // Governance-state palette, shared with the treemap and sunburst.
+  const NOSPEC   = 'color-mix(in srgb, var(--muted) 40%, var(--bg))'; // no spec
+  const GOVERNED = 'var(--chart-1)';   // has a spec
+  const SHARED   = 'var(--chart-3)';   // shared by 2+ specs
+  const covColor = pct => pct==null ? NOSPEC : `color-mix(in srgb, var(--chart-4) ${Math.round(pct)}%, var(--bad))`; // 0 clay -> 100 green
   const tss = [...data.specs.map(s=>s.updated_ts), ...data.files.map(f=>f.updated_ts)].filter(t=>t!=null);
   const tmin = tss.length ? Math.min(...tss) : 0, tspan = Math.max(1, (tss.length ? Math.max(...tss) : 1) - tmin);
   const ageColor = ts => { if(ts==null) return NOSPEC; const t=(ts-tmin)/tspan; return `color-mix(in srgb, var(--chart-3) ${Math.round(t*100)}%, var(--chart-2))`; }; // cold steel -> hot amber
@@ -42,6 +45,7 @@
     return { id:'F'+i, kind:'file', label:f.path, name:f.path.split('/').pop(), lang:f.lang, loc:f.loc,
       orphan:f.orphan, overlap:f.overlap, specs:f.specs, testPct:f.test_pct, single:single,
       specColor: f.orphan ? NOSPEC : (single ? specByIdx[f.specs[0]].color : 'var(--muted)'),
+      govColor: f.orphan ? NOSPEC : (f.overlap ? SHARED : GOVERNED),
       langColor: LANGC[f.lang], covColor: covColor(f.test_pct), ageColor: ageColor(f.updated_ts),
       fr: clamp(2.6+Math.sqrt(Math.max(f.loc,1))/6, 2.6, 9) };
   });
@@ -84,7 +88,7 @@
   let orphan = { x:W/2, y:H, cols:1 };
   let showOrphans = orphanCount <= 140;
   let showLabels = false;
-  let colorMode = 'spec';
+  let colorMode = 'gov';
   let layout = 'grouped';
   let focused = null;
   let activeSpecs = [], activeFiles = [], activeLinks = [];
@@ -105,7 +109,7 @@
     `Enter or Space on a spec to focus its subgraph, and Escape to clear focus.`;
   if (svgEl.parentNode) svgEl.parentNode.insertBefore(summaryEl, svgEl.nextSibling);
 
-  const colorOf = f => colorMode==='cov' ? f.covColor : colorMode==='age' ? f.ageColor : colorMode==='lang' ? f.langColor : f.specColor;
+  const colorOf = f => colorMode==='cov' ? f.covColor : colorMode==='age' ? f.ageColor : colorMode==='lang' ? f.langColor : colorMode==='spec' ? f.specColor : f.govColor;
 
   function recompute(){
     if(focused!=null){
@@ -409,7 +413,7 @@
   if($('g-focus')) $('g-focus').addEventListener('click',clearFocus);
 
   const hash=(location.hash||'').replace('#','');
-  if(['spec','lang','cov','age'].includes(hash)){ const b=document.querySelector(`.cmode button[data-mode="${hash}"]`);
+  if(['gov','spec','lang','cov','age'].includes(hash)){ const b=document.querySelector(`.cmode button[data-mode="${hash}"]`);
     if(b){ document.querySelectorAll('.cmode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); colorMode=hash; } }
 
   syncPressed('.lmode button'); syncPressed('.cmode button');
