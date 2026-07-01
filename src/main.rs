@@ -160,10 +160,16 @@ fn run() -> Result<()> {
         .path
         .canonicalize()
         .with_context(|| format!("cannot resolve path {}", cli.path.display()))?;
+    if !root.is_dir() {
+        anyhow::bail!("{} is not a directory", root.display());
+    }
     let project = root
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "project".into());
+    // Generated files default to the current working directory, never the
+    // analyzed project root (which may be read-only or someone else's repo).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let mut specs = load_specs(&root)?;
     enrich_drift(&root, &mut specs);
@@ -199,7 +205,7 @@ fn run() -> Result<()> {
     if cli.three_md {
         let out = cli
             .out
-            .unwrap_or_else(|| root.join(format!("{project}.3md")));
+            .unwrap_or_else(|| cwd.join(format!("{project}.3md")));
         let doc = render_3md(&root, &specs, &sources, &model);
         fs::write(&out, doc).with_context(|| format!("writing {}", out.display()))?;
         println!(
@@ -213,7 +219,7 @@ fn run() -> Result<()> {
     if cli.timeline {
         let out = cli
             .out
-            .unwrap_or_else(|| root.join(format!("{project}.timeline.3md")));
+            .unwrap_or_else(|| cwd.join(format!("{project}.timeline.3md")));
         let (doc, weeks) = render_3md_timeline(&root, &specs, &sources, &model);
         fs::write(&out, doc).with_context(|| format!("writing {}", out.display()))?;
         println!("3md timeline: {} planes ({} active weeks)", weeks + 1, weeks);
@@ -223,7 +229,7 @@ fn run() -> Result<()> {
 
     let out = cli
         .out
-        .unwrap_or_else(|| root.join(format!("{project}.atlas.html")));
+        .unwrap_or_else(|| cwd.join(format!("{project}.atlas.html")));
     let html = render_html(&model)?;
     fs::write(&out, html).with_context(|| format!("writing {}", out.display()))?;
 
@@ -295,17 +301,24 @@ fn emit_spec_detail(
 fn emit_owns(model: &Model, query: &str) -> Result<()> {
     let q = normalize(query);
     let qbase = q.rsplit('/').next().unwrap_or(q.as_str());
+    // Suffix matches must fall on a path-segment boundary, so a query of
+    // "main.rs" never mis-attributes to "src/domain.rs".
+    let suffix = format!("/{q}");
+    let exact_hit = model.files.iter().any(|f| f.path == q);
+    let basename_matches: Vec<&FileOut> = model
+        .files
+        .iter()
+        .filter(|f| f.path.rsplit('/').next() == Some(qbase))
+        .collect();
     let file = model
         .files
         .iter()
         .find(|f| f.path == q)
-        .or_else(|| model.files.iter().find(|f| f.path.ends_with(&q)))
-        .or_else(|| {
-            model
-                .files
-                .iter()
-                .find(|f| f.path.rsplit('/').next() == Some(qbase))
-        });
+        .or_else(|| model.files.iter().find(|f| f.path.ends_with(&suffix)))
+        .or_else(|| basename_matches.first().copied());
+    // Multiple files share the queried basename and the query was not exact:
+    // surface every candidate instead of silently returning the first.
+    let ambiguous = !exact_hit && basename_matches.len() > 1;
 
     let out = match file {
         Some(f) => {
@@ -315,6 +328,11 @@ fn emit_owns(model: &Model, query: &str) -> Result<()> {
                 .filter_map(|&i| model.specs.get(i))
                 .map(|s| serde_json::json!({ "module": s.module, "path": s.path }))
                 .collect();
+            let matches: Vec<&String> = if ambiguous {
+                basename_matches.iter().map(|m| &m.path).collect()
+            } else {
+                Vec::new()
+            };
             serde_json::json!({
                 "query": query,
                 "file": f.path,
@@ -322,8 +340,9 @@ fn emit_owns(model: &Model, query: &str) -> Result<()> {
                 "orphan": f.orphan,
                 "overlap": f.overlap,
                 "test_pct": f.test_pct,
-                "last_change_ts": f.updated_ts,
+                "updated_ts": f.updated_ts,
                 "spec_count": f.specs.len(),
+                "matches": matches,
             })
         }
         None => serde_json::json!({
@@ -341,6 +360,27 @@ fn emit_owns(model: &Model, query: &str) -> Result<()> {
 /// doc, or companions) they touch, and flag which touched specs already warrant
 /// review. Degrades to an empty result when git is unavailable.
 fn emit_since(root: &Path, specs: &[Spec], model: &Model, reference: &str) -> Result<()> {
+    // When this is a git repo, a bad ref must be an error (non-zero exit), not a
+    // silent empty worklist an agent would read as "nothing changed".
+    let in_git = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if in_git {
+        let valid = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "--verify", "--quiet", &format!("{reference}^{{commit}}")])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !valid {
+            anyhow::bail!("unknown git ref '{reference}'");
+        }
+    }
     let changed = git_changed_since(root, reference);
     let changed_set: std::collections::HashSet<&String> = changed.iter().collect();
 
@@ -1305,7 +1345,9 @@ fn attach_coverage(root: &Path, sources: &mut [Source]) {
         } else if line.starts_with("end_of_record") {
             if let Some(p) = current.take() {
                 let total = if lf > 0 { lf } else { da_total };
-                let hit = if lf > 0 { lh } else { da_hit };
+                // Clamp hit <= total so a malformed record (LH>LF) can't yield a
+                // coverage percentage above 100.
+                let hit = (if lf > 0 { lh } else { da_hit }).min(total);
                 if total > 0 {
                     let e = cov.entry(p).or_insert((0, 0));
                     e.0 += hit;

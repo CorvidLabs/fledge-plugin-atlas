@@ -132,7 +132,9 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .gcount{font-family:var(--font-mono);font-size:12px;color:var(--faint)}
 .gchip{font-family:var(--font-mono);font-size:12px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:4px 9px;cursor:pointer;align-items:center;gap:5px}
 .gspace{flex:1}
-.gtools button:not(.gchip){font-family:var(--font-mono);font-size:13px;background:transparent;color:var(--muted);border:1px solid var(--line);width:32px;height:30px;cursor:pointer}
+.gtools button:not(.gchip){font-family:var(--font-mono);font-size:13px;background:transparent;color:var(--muted);border:1px solid var(--line);height:30px;cursor:pointer}
+/* only the zoom buttons are square icons; label buttons (grouped/network/fit) size to text */
+.gtools #g-zin,.gtools #g-zout{width:32px}
 .gtools button#g-fit{width:auto;padding:0 10px}
 .gtools button:not(.gchip):hover{color:var(--text);border-color:var(--faint)}
 .graph{position:relative;border:1px solid var(--line);background:radial-gradient(circle at 50% 40%,var(--surface),var(--bg));height:660px;overflow:hidden}
