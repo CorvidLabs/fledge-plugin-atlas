@@ -4242,6 +4242,7 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
         h.push_str("<section class=\"block comp\" id=\"c-treemap\"><h2>Codebase treemap</h2>");
         h.push_str("<p class=\"hint\">Every source file, sized by its lines of code and coloured by the spec that owns it, so each spec reads as a territory. Files with no spec are gray. When test coverage is known, tiles instead run clay (untested) to green (covered). Hover a tile for its spec and coverage.</p>");
         h.push_str("<div class=\"delight\" id=\"tm-wrap\"><svg id=\"tm-svg\" role=\"img\" aria-label=\"Codebase treemap\"></svg><div id=\"tm-tip\" class=\"tip\"></div></div>");
+        h.push_str("<div class=\"viz-legend\" id=\"tm-legend\"></div>");
         h.push_str("</section>");
     }
 
@@ -4250,6 +4251,7 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
         h.push_str("<section class=\"block comp\" id=\"c-sunburst\"><h2>Coverage sunburst</h2>");
         h.push_str("<p class=\"hint\">The inner ring is your specs, sized by lines; the outer ring is the files each one governs. Uncovered files without a spec fall into the gray \"no spec\" wedge. The center shows overall coverage.</p>");
         h.push_str("<div class=\"delight sunburst\" id=\"sb-wrap\"><svg id=\"sb-svg\" role=\"img\" aria-label=\"Coverage sunburst\"></svg><div id=\"sb-tip\" class=\"tip\"></div></div>");
+        h.push_str("<div class=\"viz-legend\" id=\"sb-legend\"></div>");
         h.push_str("</section>");
     }
 

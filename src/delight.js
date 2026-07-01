@@ -12,7 +12,7 @@
   const specs = Array.isArray(data.specs) ? data.specs : [];
   const stats = data.stats || {};
   const hasCov = stats.test_coverage_pct != null;
-  const NOSPEC = 'var(--surface-strong)';
+  const NOSPEC = 'color-mix(in srgb, var(--muted) 40%, var(--bg))';
 
   // Shade chart-4 (green) toward bad (clay) by coverage percentage.
   const covFill = pct => `color-mix(in srgb, var(--chart-4) ${Math.round(clamp(pct,0,100))}%, var(--bad))`;
@@ -286,8 +286,22 @@
     });
   }
 
-  try { drawTreemap(); } catch(e){ note('tm-wrap', 'Treemap unavailable.'); }
-  try { drawSunburst(); } catch(e){ note('sb-wrap', 'Sunburst unavailable.'); }
+  // Colour key: the biggest specs by name, plus the "no spec" gray, so the
+  // colours in the treemap and sunburst are readable without hovering.
+  function buildLegend(elId){
+    const el = document.getElementById(elId); if(!el) return;
+    const ranked = specs.slice().sort((a,b)=>(b.loc||0)-(a.loc||0));
+    const top = ranked.slice(0, 10);
+    const item = (color, label, cls) =>
+      `<span class="lg-item${cls?' '+cls:''}"><span class="lg-sw" style="background:${color}"></span>${esc(label)}</span>`;
+    const parts = top.map(s=>item(s.color, s.module));
+    if(ranked.length > top.length) parts.push(`<span class="lg-item lg-more">+${ranked.length-top.length} more specs</span>`);
+    if(files.some(f=>f.orphan)) parts.push(item(NOSPEC, 'no spec'));
+    el.innerHTML = parts.join('');
+  }
+
+  try { drawTreemap(); buildLegend('tm-legend'); } catch(e){ note('tm-wrap', 'Treemap unavailable.'); }
+  try { drawSunburst(); buildLegend('sb-legend'); } catch(e){ note('sb-wrap', 'Sunburst unavailable.'); }
   try { drawQuadrant(); } catch(e){ note('qd-wrap', 'Quadrant unavailable.'); }
 })();
 </script>

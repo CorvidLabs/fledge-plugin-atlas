@@ -326,11 +326,16 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .delight.sunburst svg{max-width:620px;margin:0 auto}
 #tm-svg .tm-cell rect{stroke:var(--bg);stroke-width:1.5}
 #tm-svg .tm-cell:hover rect{stroke:var(--accent);stroke-width:2}
-.tm-label{font-family:var(--font-mono);font-size:11px;fill:var(--bg);pointer-events:none}
+.tm-label{font-family:var(--font-mono);font-size:11px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round;pointer-events:none}
 #sb-svg .sb-arc{stroke:var(--bg);stroke-width:1}
 #sb-svg .sb-arc:hover{stroke:var(--accent);stroke-width:1.6}
 .sb-center{font-family:var(--font-display);font-size:34px;font-weight:700;fill:var(--text);text-anchor:middle}
 .sb-center-sub{font-family:var(--font-mono);font-size:12px;fill:var(--faint);text-anchor:middle;text-transform:uppercase;letter-spacing:.12em}
+/* colour key shared by the treemap and sunburst */
+.viz-legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:12px 2px 0;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.viz-legend .lg-item{display:inline-flex;align-items:center;gap:7px;min-width:0}
+.viz-legend .lg-sw{width:12px;height:12px;flex:0 0 auto;border:1px solid var(--line)}
+.viz-legend .lg-more{color:var(--faint)}
 .qd-axis{stroke:var(--line);stroke-width:1.5}
 .qd-axlabel{font-family:var(--font-mono);font-size:12px;fill:var(--faint)}
 .qd-watch{font-family:var(--font-mono);font-size:12px;fill:var(--bad);text-anchor:end;text-transform:uppercase;letter-spacing:.14em}
