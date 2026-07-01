@@ -4905,4 +4905,123 @@ mod tests {
         assert_eq!(specs[0].module, "a");
         let _ = fs::remove_dir_all(&dir);
     }
+
+    // ---- integration: the full analysis + render pipeline on a fixture repo ----
+
+    /// A small but realistic project: three specs governing four code files, with
+    /// one orphan, one file shared by two specs (overlap), one phantom reference,
+    /// and one non-code governed file (which must NOT be counted as a phantom).
+    fn fixture() -> PathBuf {
+        let d = tmp();
+        let w = |rel: &str, body: &str| {
+            let p = d.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        };
+        w("specs/foo/foo.spec.md",
+            "---\nmodule: foo\nstatus: active\nversion: 1\nfiles:\n  - src/foo.rs\n---\n# foo\n## Purpose\nx\n");
+        w("specs/bar/bar.spec.md",
+            "---\nmodule: bar\nstatus: active\nversion: 1\nfiles:\n  - src/bar.rs\n  - src/shared.rs\n  - src/missing.rs\n  - docs/NOTES.md\n---\n# bar\n## Purpose\nx\n");
+        w("specs/baz/baz.spec.md",
+            "---\nmodule: baz\nstatus: active\nversion: 1\nfiles:\n  - src/shared.rs\ndepends_on:\n  - foo\n---\n# baz\n## Purpose\nx\n");
+        w("src/foo.rs", "pub fn foo() -> u32 { 1 }\npub fn foo2() -> u32 { 2 }\n");
+        w("src/bar.rs", "pub fn bar() -> u32 { 3 }\n");
+        w("src/shared.rs", "pub fn shared() -> u32 { 4 }\n");
+        w("src/orphan.rs", "pub fn orphan() -> u32 { 5 }\npub fn orphan2() {}\n");
+        w("docs/NOTES.md", "# notes\nnon-code governed file\n");
+        d
+    }
+
+    fn analyze(root: &Path) -> (Vec<Spec>, Vec<Source>, Coverage) {
+        let specs = load_specs(root).unwrap();
+        let mut sources = load_sources(root);
+        attach_coverage(root, &mut sources);
+        let cov = attach_specs(root, &specs, &mut sources);
+        (specs, sources, cov)
+    }
+
+    #[test]
+    fn pipeline_maps_files_and_finds_orphan_and_overlap() {
+        let root = fixture();
+        let (specs, sources, cov) = analyze(&root);
+        assert_eq!(specs.len(), 3, "three specs discovered");
+        assert_eq!(sources.len(), 4, "four code files (docs/NOTES.md is not code)");
+        assert_eq!(cov.covered_files, 3, "foo, bar, shared are covered");
+        assert_eq!(cov.orphan_files, 1, "orphan.rs has no spec");
+        assert_eq!(cov.overlap_files, 1, "shared.rs is governed by bar and baz");
+        assert!(cov.total_loc > cov.covered_loc, "orphan LOC keeps coverage under 100%");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn phantom_is_a_missing_path_not_a_noncode_file() {
+        let root = fixture();
+        let (_specs, _sources, cov) = analyze(&root);
+        let phantoms: Vec<&String> = cov.phantoms.iter().flatten().collect();
+        assert_eq!(phantoms.len(), 1, "exactly one phantom");
+        assert!(phantoms.iter().any(|p| p.ends_with("missing.rs")), "the missing path is the phantom");
+        assert!(!phantoms.iter().any(|p| p.contains("NOTES.md")),
+            "an existing non-code file is governed, not a phantom");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn build_model_reports_stats_deps_and_noncode() {
+        let root = fixture();
+        let (specs, sources, cov) = analyze(&root);
+        let git = load_git(&root, &specs, &sources);
+        assert!(git.is_none(), "the temp fixture is not a git repo");
+        let model = build_model("fixture", &specs, &sources, &cov, git.as_ref());
+        assert_eq!(model.stats.specs, 3);
+        assert_eq!(model.stats.source_files, 4);
+        assert_eq!(model.stats.orphan_files, 1);
+        assert_eq!(model.stats.overlap_files, 1);
+        assert_eq!(model.stats.phantom_refs, 1);
+        assert!(model.stats.coverage_pct > 0.0 && model.stats.coverage_pct < 100.0);
+        assert!(!model.stats.has_history);
+        let bar = model.specs.iter().find(|s| s.module == "bar").unwrap();
+        assert_eq!(bar.noncode_files, 1, "bar governs one non-code file");
+        let baz = model.specs.iter().find(|s| s.module == "baz").unwrap();
+        assert!(baz.depends_on.iter().any(|d| d == "foo"), "baz depends on foo");
+        let foo = model.specs.iter().find(|s| s.module == "foo").unwrap();
+        assert!(foo.dependents.iter().any(|d| d == "baz"), "foo is depended on by baz");
+        assert!(serde_json::to_string(&model).is_ok(), "the --json surface serializes");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn render_html_is_self_contained_and_embeds_the_model() {
+        let root = fixture();
+        let (specs, sources, cov) = analyze(&root);
+        let git = load_git(&root, &specs, &sources);
+        let model = build_model("fixture", &specs, &sources, &cov, git.as_ref());
+        let html = render_html(&root, &model).unwrap();
+        assert!(html.contains("fixture"), "the project name is in the page");
+        assert!(html.contains("atlas-data"), "the model JSON is embedded");
+        assert!(html.contains("foo") && html.contains("bar") && html.contains("baz"),
+            "every spec module appears");
+        assert!(html.contains("<style") && html.contains("<script"), "styles and scripts are inline");
+        // Self-contained: no external stylesheet, script, or web font is fetched.
+        assert!(!html.contains("<link "), "no external <link>");
+        assert!(!html.contains("<script src="), "no external <script src>");
+        assert!(!html.contains("@font-face"), "no web-font fetch");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn attach_coverage_reads_an_lcov_report() {
+        let root = fixture();
+        // Cover src/foo.rs: 2 lines found, 1 hit -> test should be (hit, found) = (1, 2).
+        let sf = root.join("src/foo.rs");
+        fs::write(
+            root.join("lcov.info"),
+            format!("SF:{}\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nend_of_record\n", sf.to_string_lossy()),
+        )
+        .unwrap();
+        let mut sources = load_sources(&root);
+        attach_coverage(&root, &mut sources);
+        let foo = sources.iter().find(|s| s.rel_path.ends_with("foo.rs")).unwrap();
+        assert_eq!(foo.test, Some((1, 2)), "lcov (hit, found) attaches to the matching source");
+        let _ = fs::remove_dir_all(&root);
+    }
 }
