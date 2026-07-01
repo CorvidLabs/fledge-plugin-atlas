@@ -32,7 +32,7 @@
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--font-display)}
 .wrap{max-width:1180px;margin:0 auto;padding:56px 32px 80px}
 code{font-family:var(--font-mono);font-size:.9em;color:var(--accent)}
-.kicker{font-family:var(--font-mono);font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:10px;margin:0 0 14px}
+.kicker{font-family:var(--font-mono);font-size:14px;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:12px;margin:0 0 14px}
 /* component show/hide bar */
 .compbar{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 0;margin:0 0 30px;background:var(--bg);border-bottom:1px solid var(--line)}
 .compbar .cblabel{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--faint);margin-right:4px}
@@ -85,6 +85,8 @@ h1{font-size:44px;font-weight:800;letter-spacing:-.03em;margin:0 0 24px}
 .chip.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .chip.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
 h2{font-size:14px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:0 0 18px;font-weight:600}
+section.comp>h2{display:flex;align-items:center;gap:11px}
+section.comp>h2::before{content:"";width:9px;height:9px;background:var(--accent);flex-shrink:0}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:44px}
 .stat{background:var(--bg);padding:20px}
 .stat .v{display:block;font-size:30px;font-weight:800;letter-spacing:-.02em}
@@ -92,7 +94,13 @@ h2{font-size:14px;font-family:var(--font-mono);text-transform:uppercase;letter-s
 .stat .l{display:block;font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);margin-top:6px}
 .stat .def{display:block;font-size:12px;color:var(--muted);margin-top:7px;line-height:1.35}
 .glance{grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
-.block{margin-bottom:52px}
+.block{margin-bottom:0}
+/* hairline-separated section bands (kit grammar): each section reads as a chapter */
+section.comp,details.comp{border-top:1px solid var(--line);padding:52px 0 0;margin:0}
+#c-verdict{border-top:0;padding-top:10px}
+/* sections that are themselves bordered boxes: space with margin, no inner strip */
+#c-glance,#c-graph{border-top:0;padding-top:0;margin-top:52px}
+@media (max-width:640px){section.comp,details.comp{padding-top:38px}#c-glance,#c-graph{margin-top:38px}}
 /* collapsible explore (graph) section */
 details.explore{border:1px solid var(--line);background:var(--surface);margin-bottom:52px}
 details.explore>summary{cursor:pointer;padding:16px 20px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.14em;font-size:14px;color:var(--muted);font-weight:600;list-style:none;user-select:none}
@@ -258,4 +266,6 @@ table.list{border-collapse:collapse;width:100%;font-size:14px}
 .list .num{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .empty{color:var(--muted)}
 footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:var(--faint);font-size:13px}
+/* the one allowed gradient: a feather-sheen hairline, exactly once, at the very bottom */
+.hairline-iridescent{height:5px;border:0;margin-top:26px;background:linear-gradient(90deg,#0E6F66 0%,#1799A3 55%,#1E6FA8 100%)}
 </style>
