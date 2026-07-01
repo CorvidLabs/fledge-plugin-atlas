@@ -129,6 +129,9 @@ struct Spec {
     owner: String,
     rel_path: String,
     files: Vec<String>,
+    /// Module names this spec declares it depends on (spec frontmatter
+    /// `depends_on:`). Raw names; resolved to spec indices at model time.
+    depends_on: Vec<String>,
     /// Sibling docs in the spec's own directory (spec-sync companions:
     /// requirements.md, tasks.md, context.md, …). Relative paths.
     companions: Vec<String>,
@@ -1042,21 +1045,31 @@ fn parse_spec(root: &Path, path: &Path) -> Option<Spec> {
     let mut version = String::new();
     let mut owner = String::new();
     let mut files = Vec::new();
+    let mut depends_on: Vec<String> = Vec::new();
     let mut in_files = false;
+    let mut in_deps = false;
 
     for line in front.lines() {
         let trimmed = line.trim_end();
-        if in_files {
+        // Block-list continuation for the currently open key (`files:` or
+        // `depends_on:` written as a `- item` list on following lines).
+        if in_files || in_deps {
             let t = trimmed.trim_start();
             if let Some(rest) = t.strip_prefix("- ") {
-                let f = normalize(rest.trim().trim_matches(['"', '\'']));
-                if !f.is_empty() {
-                    files.push(f);
+                let raw = rest.trim().trim_matches(['"', '\'']);
+                if in_files {
+                    let f = normalize(raw);
+                    if !f.is_empty() {
+                        files.push(f);
+                    }
+                } else if !raw.is_empty() {
+                    depends_on.push(raw.to_string());
                 }
                 continue;
             }
             if !trimmed.starts_with(char::is_whitespace) {
                 in_files = false;
+                in_deps = false;
             } else {
                 continue;
             }
@@ -1070,6 +1083,15 @@ fn parse_spec(root: &Path, path: &Path) -> Option<Spec> {
                 "version" => version = val.to_string(),
                 "owner" => owner = val.to_string(),
                 "files" if val.is_empty() => in_files = true,
+                // `depends_on:` may be a block list (empty value, `- item`
+                // lines follow) or inline (`[a, b]`, or `[]`).
+                "depends_on" => {
+                    if val.is_empty() {
+                        in_deps = true;
+                    } else {
+                        depends_on = parse_inline_list(val);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1100,10 +1122,23 @@ fn parse_spec(root: &Path, path: &Path) -> Option<Spec> {
         owner,
         rel_path,
         files,
+        depends_on,
         companions,
         sections,
         drift: None,
     })
+}
+
+/// Parse a YAML inline sequence written on one line, e.g. `[a, b]`, `["x"]`, or
+/// `[]`. Returns the trimmed, unquoted, non-empty entries.
+fn parse_inline_list(val: &str) -> Vec<String> {
+    val.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|s| s.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// The spec-sync companion doc set: standard sibling files that accompany a
@@ -2038,6 +2073,13 @@ struct SpecOut {
     review_reason: Option<String>,
     drift: Option<String>,
     color: String,
+    /// Module names this spec declares it depends on (spec frontmatter
+    /// `depends_on:`), filtered to those that resolve to a known spec.
+    #[serde(default)]
+    depends_on: Vec<String>,
+    /// Reverse edges: modules whose specs declare a dependency on this one.
+    #[serde(default)]
+    dependents: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -2079,6 +2121,27 @@ fn build_model(
         Some(g) => (g.min_ts as f64, (g.max_ts - g.min_ts).max(1) as f64),
         None => (0.0, 1.0),
     };
+    // Resolve spec-to-spec dependency edges from `depends_on`. Only edges whose
+    // target is a known module become graph edges; reverse edges (dependents)
+    // are collected so the model carries both directions.
+    let mod_index: std::collections::HashMap<&str, usize> = specs
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.module.as_str(), i))
+        .collect();
+    let mut resolved_deps: Vec<Vec<String>> = vec![Vec::new(); specs.len()];
+    let mut dependents: Vec<Vec<String>> = vec![Vec::new(); specs.len()];
+    for (i, s) in specs.iter().enumerate() {
+        for dep in &s.depends_on {
+            if let Some(&j) = mod_index.get(dep.as_str()) {
+                if j == i || resolved_deps[i].iter().any(|d| d == dep) {
+                    continue;
+                }
+                resolved_deps[i].push(dep.clone());
+                dependents[j].push(s.module.clone());
+            }
+        }
+    }
     let spec_out: Vec<SpecOut> = specs
         .iter()
         .enumerate()
@@ -2183,6 +2246,8 @@ fn build_model(
                 review_reason,
                 drift: s.drift.clone(),
                 color: spec_color(i),
+                depends_on: resolved_deps.get(i).cloned().unwrap_or_default(),
+                dependents: dependents.get(i).cloned().unwrap_or_default(),
             }
         })
         .collect();
@@ -2934,6 +2999,9 @@ fn render_html(m: &Model) -> Result<String> {
         comps.push(("c-orphans", "needs a spec"));
     }
     comps.push(("c-graph", "spec map"));
+    if !m.specs.is_empty() {
+        comps.push(("c-deps", "dependencies"));
+    }
     if !m.files.is_empty() {
         comps.push(("c-treemap", "treemap"));
     }
@@ -3300,6 +3368,20 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"img\" aria-label=\"Spec and code relationship graph\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
     h.push_str("</div></details>");
 
+    // ---- Spec dependency DAG (spec->spec depends_on) ----
+    if !m.specs.is_empty() {
+        h.push_str("<section class=\"block comp\" id=\"c-deps\"><h2>Spec dependencies</h2>");
+        h.push_str("<p class=\"hint\">How your specs depend on one another, read from each spec's <code>depends_on</code>. An arrow points from a spec to the module it relies on; foundational modules settle toward the bottom. Bigger nodes own more code. A ringed node is a hub many specs lean on; red arrows mark a dependency cycle. Hover a node to trace what it needs and what needs it.</p>");
+        h.push_str("<div class=\"maplegend\">");
+        h.push_str("<span><span class=\"k dep-spec\"></span>spec module</span>");
+        h.push_str("<span><span class=\"k dep-hub\"></span>hub (many depend on it)</span>");
+        h.push_str("<span><span class=\"k dep-cyc\"></span>cycle edge</span>");
+        h.push_str("</div>");
+        h.push_str("<div class=\"depgraph\"><svg id=\"deps-svg\" role=\"img\" aria-label=\"Spec dependency graph\"></svg><div id=\"deps-tip\" class=\"tip\"></div></div>");
+        h.push_str("<p class=\"deps-note\" id=\"deps-note\"></p>");
+        h.push_str("</section>");
+    }
+
     // ---- Codebase treemap (files sized by lines) ----
     if !m.files.is_empty() {
         h.push_str("<section class=\"block comp\" id=\"c-treemap\"><h2>Codebase treemap</h2>");
@@ -3491,6 +3573,7 @@ fn render_html(m: &Model) -> Result<String> {
         "<script id=\"atlas-data\" type=\"application/json\">{data_json}</script>"
     ));
     h.push_str(GRAPH_JS);
+    h.push_str(DEPGRAPH_JS);
     h.push_str(DELIGHT_JS);
     h.push_str(COMPONENTS_JS);
     h.push_str(THREEMD_JS);
@@ -3716,6 +3799,7 @@ fn meta(h: &mut String, key: &str, val: &str) {
 
 const STYLE: &str = include_str!("style.css");
 const GRAPH_JS: &str = include_str!("graph.js");
+const DEPGRAPH_JS: &str = include_str!("depgraph.js");
 const DELIGHT_JS: &str = include_str!("delight.js");
 const COMPONENTS_JS: &str = include_str!("components.js");
 const THREEMD_JS: &str = include_str!("threemd.js");
