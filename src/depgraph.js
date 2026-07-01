@@ -109,7 +109,10 @@
     });
   });
 
-  svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  // Horizontal slack so labels on the edge-most nodes are not clipped; the
+  // viewBox scales to the container, so this just reserves room, it doesn't overflow.
+  const LM = 70;
+  svgEl.setAttribute('viewBox', `${-LM} 0 ${W + LM * 2} ${H}`);
   svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
   const gEdges = mk('g'), gArrows = mk('g'), gNodes = mk('g');
