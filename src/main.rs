@@ -2170,6 +2170,15 @@ fn render_html(m: &Model) -> Result<String> {
         comps.push(("c-orphans", "needs a spec"));
     }
     comps.push(("c-graph", "spec map"));
+    if !m.files.is_empty() {
+        comps.push(("c-treemap", "treemap"));
+    }
+    if !m.specs.is_empty() || m.files.iter().any(|f| f.orphan) {
+        comps.push(("c-sunburst", "sunburst"));
+    }
+    if !m.specs.is_empty() {
+        comps.push(("c-quadrant", "churn vs coverage"));
+    }
     if !m.specs.is_empty() {
         comps.push(("c-specs", "specs"));
         comps.push(("c-debt", "spec debt"));
@@ -2501,6 +2510,30 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"img\" aria-label=\"Spec and code relationship graph\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
     h.push_str("</div></details>");
 
+    // ---- Codebase treemap (files sized by lines) ----
+    if !m.files.is_empty() {
+        h.push_str("<section class=\"block comp\" id=\"c-treemap\"><h2>Codebase treemap</h2>");
+        h.push_str("<p class=\"hint\">Every source file, sized by its lines of code. Files with no spec are gray; spec-covered files are green, tinted toward clay as their test coverage falls. Hover a tile for details.</p>");
+        h.push_str("<div class=\"delight\" id=\"tm-wrap\"><svg id=\"tm-svg\" role=\"img\" aria-label=\"Codebase treemap\"></svg><div id=\"tm-tip\" class=\"tip\"></div></div>");
+        h.push_str("</section>");
+    }
+
+    // ---- Coverage sunburst (specs ring + files ring) ----
+    if !m.specs.is_empty() || m.files.iter().any(|f| f.orphan) {
+        h.push_str("<section class=\"block comp\" id=\"c-sunburst\"><h2>Coverage sunburst</h2>");
+        h.push_str("<p class=\"hint\">The inner ring is your specs, sized by lines; the outer ring is the files each one governs. Uncovered files without a spec fall into the gray \"no spec\" wedge. The center shows overall coverage.</p>");
+        h.push_str("<div class=\"delight sunburst\" id=\"sb-wrap\"><svg id=\"sb-svg\" role=\"img\" aria-label=\"Coverage sunburst\"></svg><div id=\"sb-tip\" class=\"tip\"></div></div>");
+        h.push_str("</section>");
+    }
+
+    // ---- Churn vs coverage quadrant ----
+    if !m.specs.is_empty() {
+        h.push_str("<section class=\"block comp\" id=\"c-quadrant\"><h2>Churn vs coverage</h2>");
+        h.push_str("<p class=\"hint\">Each spec plotted by how much it changes against how well it is covered. Specs in the shaded \"watch\" corner change a lot but are thinly covered, so they earn a second look.</p>");
+        h.push_str("<div class=\"delight\" id=\"qd-wrap\"><svg id=\"qd-svg\" role=\"img\" aria-label=\"Churn versus coverage scatter plot\"></svg><div id=\"qd-tip\" class=\"tip\"></div></div>");
+        h.push_str("</section>");
+    }
+
     // ---- 3md documents (inline scrubber) ----
     if !m.threemd.is_empty() {
         h.push_str("<section class=\"block comp\" id=\"c-3md\"><h2>3md documents</h2>");
@@ -2663,6 +2696,7 @@ fn render_html(m: &Model) -> Result<String> {
         "<script id=\"atlas-data\" type=\"application/json\">{data_json}</script>"
     ));
     h.push_str(GRAPH_JS);
+    h.push_str(DELIGHT_JS);
     h.push_str(COMPONENTS_JS);
     h.push_str(THREEMD_JS);
     h.push_str(SINCE_JS);
@@ -2792,6 +2826,7 @@ fn meta(h: &mut String, key: &str, val: &str) {
 
 const STYLE: &str = include_str!("style.css");
 const GRAPH_JS: &str = include_str!("graph.js");
+const DELIGHT_JS: &str = include_str!("delight.js");
 const COMPONENTS_JS: &str = include_str!("components.js");
 const THREEMD_JS: &str = include_str!("threemd.js");
 const SINCE_JS: &str = include_str!("since.js");

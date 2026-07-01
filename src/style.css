@@ -300,4 +300,23 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .delta-list li{display:flex;align-items:baseline;gap:12px;background:var(--surface);padding:9px 12px;flex-wrap:wrap}
 .delta-list .dl-mod{font-family:var(--font-mono);font-size:13px;color:var(--text)}
 .delta-list .dl-meta{font-family:var(--font-mono);font-size:11px;color:var(--faint);margin-left:auto}
+/* delight visuals: treemap, sunburst, churn/coverage quadrant */
+.delight{position:relative;border:1px solid var(--line);background:radial-gradient(circle at 50% 40%,var(--surface),var(--bg));overflow:hidden}
+.delight svg{width:100%;height:auto;display:block}
+.delight .empty{margin:0;padding:40px 16px;text-align:center}
+.delight.sunburst{background:radial-gradient(circle at 50% 50%,var(--surface),var(--bg))}
+.delight.sunburst svg{max-width:620px;margin:0 auto}
+#tm-svg .tm-cell rect{stroke:var(--bg);stroke-width:1.5}
+#tm-svg .tm-cell:hover rect{stroke:var(--accent);stroke-width:2}
+.tm-label{font-family:var(--font-mono);font-size:11px;fill:var(--bg);pointer-events:none}
+#sb-svg .sb-arc{stroke:var(--bg);stroke-width:1}
+#sb-svg .sb-arc:hover{stroke:var(--accent);stroke-width:1.6}
+.sb-center{font-family:var(--font-display);font-size:34px;font-weight:700;fill:var(--text);text-anchor:middle}
+.sb-center-sub{font-family:var(--font-mono);font-size:12px;fill:var(--faint);text-anchor:middle;text-transform:uppercase;letter-spacing:.12em}
+.qd-axis{stroke:var(--line);stroke-width:1.5}
+.qd-axlabel{font-family:var(--font-mono);font-size:12px;fill:var(--faint)}
+.qd-watch{font-family:var(--font-mono);font-size:12px;fill:var(--bad);text-anchor:end;text-transform:uppercase;letter-spacing:.14em}
+.qd-dotlabel{font-family:var(--font-mono);font-size:12px}
+#qd-svg .qd-pt circle{stroke-width:1.5;cursor:default}
+#qd-svg .qd-pt:hover circle{stroke:var(--accent);stroke-width:2}
 </style>
