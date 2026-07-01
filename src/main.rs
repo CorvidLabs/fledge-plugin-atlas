@@ -844,6 +844,8 @@ struct Model {
     /// Daily commit activity split into spec vs code touches, when git history
     /// is available. Drives the contribution calendar.
     calendar: Option<Calendar>,
+    /// The Corvid Pet: a gamified, stateless read on project health.
+    pet: Pet,
 }
 
 #[derive(Serialize)]
@@ -862,6 +864,207 @@ struct DayOut {
     spec: usize,
     /// Commits that day touching code.
     code: usize,
+}
+
+/// The Corvid Pet: a stateless desk-crow whose stats are pure functions of the
+/// repo scan + git history, so it is always exactly accurate and reproducible.
+#[derive(Serialize)]
+struct Pet {
+    name: &'static str,
+    stage: &'static str,
+    stage_index: usize,
+    level: u32,
+    xp: i64,
+    xp_next: i64,
+    xp_progress: f64,
+    happiness: u32,
+    hunger: u32,
+    energy: u32,
+    health: u32,
+    mood: &'static str,
+    mood_reason: String,
+    next_goal: String,
+    // drivers (so an agent can explain the pet without re-deriving it)
+    specs: usize,
+    complete_specs: usize,
+    approved_specs: usize,
+    spec_coverage: f64,
+    test_coverage: f64,
+    orphans: usize,
+    phantoms: usize,
+    streak: u32,
+}
+
+struct PetDrivers {
+    specs: usize,
+    complete_specs: usize,
+    approved_specs: usize,
+    scov: f64,
+    cov: f64,
+    has_test: bool,
+    orphans: usize,
+    phantoms: usize,
+    files: usize,
+    streak: u32,
+    recent_w: f64,
+    stale_frac: f64,
+    companion_pts: f64,
+    status_pts: f64,
+}
+
+fn pet_curve(l: u32) -> f64 {
+    if l == 0 {
+        0.0
+    } else {
+        50.0 * (l as f64).powf(1.6)
+    }
+}
+
+fn compute_pet(d: PetDrivers) -> Pet {
+    let activity_pts = 2.0 * d.recent_w;
+    let xp = (d.specs as f64 * 8.0 + d.companion_pts + d.status_pts + activity_pts
+        - 4.0 * d.orphans as f64
+        - 6.0 * d.phantoms as f64)
+        .max(0.0);
+
+    let mut level = 0u32;
+    while pet_curve(level + 1) <= xp && level < 99 {
+        level += 1;
+    }
+    let base = pet_curve(level);
+    let next = pet_curve(level + 1);
+    let progress = if next > base {
+        ((xp - base) / (next - base)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+
+    let clamp100 = |v: f64| v.clamp(0.0, 100.0).round() as u32;
+    let specs_f = d.specs.max(1) as f64;
+    // Quality proxy: real test coverage when we have it, else spec coverage, so
+    // a project without an lcov report is not treated as 0% tested.
+    let q = if d.has_test { d.cov } else { d.scov };
+    let orphan_frac = d.orphans as f64 / d.files.max(1) as f64;
+    let health = clamp100(
+        100.0 * (0.5 * d.scov + 0.5 * (0.5 * q + 0.5 * (d.complete_specs as f64 / specs_f)))
+            - 10.0 * (d.phantoms.min(6) as f64),
+    );
+    let happiness = clamp100(
+        100.0 * (0.45 * d.scov + 0.25 * q + 0.3 * (d.streak as f64 / 7.0).min(1.0))
+            - 40.0 * orphan_frac
+            - 8.0 * (d.phantoms.min(5) as f64),
+    );
+    let hunger = clamp100(100.0 * (0.5 * (1.0 - d.scov) + 0.3 * orphan_frac + 0.2 * d.stale_frac));
+    let energy = clamp100(100.0 * (d.recent_w / 8.0).tanh());
+
+    let stage_index = if d.specs == 0 {
+        0
+    } else if level >= 18
+        && d.scov >= 0.9
+        && q >= 0.85
+        && d.phantoms == 0
+        && d.orphans == 0
+        && d.streak >= 14
+    {
+        6
+    } else if level >= 12 && d.scov >= 0.8 && q >= 0.75 && d.streak >= 7 {
+        5
+    } else if level >= 8 && q >= 0.6 && d.phantoms == 0 {
+        4
+    } else if level >= 5 && d.scov >= 0.5 && d.streak >= 3 {
+        3
+    } else if level >= 3 && d.complete_specs >= 2 {
+        2
+    } else {
+        1
+    };
+    let stage = [
+        "Egg",
+        "Hatchling",
+        "Fledgling",
+        "Corvid",
+        "Rook",
+        "Raven",
+        "Legendary Corvid",
+    ][stage_index];
+
+    let (mood, mood_reason) = if d.specs == 0 {
+        (
+            "sleepy",
+            "No specs yet. Write one to hatch the egg.".to_string(),
+        )
+    } else if d.phantoms > 0 {
+        (
+            "sick",
+            format!(
+                "{} broken spec reference{} to heal.",
+                d.phantoms,
+                if d.phantoms == 1 { "" } else { "s" }
+            ),
+        )
+    } else if health < 40 {
+        (
+            "sick",
+            "Low health. Coverage and spec completeness need work.".to_string(),
+        )
+    } else if hunger > 60 {
+        (
+            "hungry",
+            format!("{} orphan files. Feed me a spec.", d.orphans),
+        )
+    } else if energy < 25 {
+        ("sleepy", "Quiet lately. Few recent commits.".to_string())
+    } else if d.streak >= 7 {
+        ("celebrating", format!("{}-day activity streak!", d.streak))
+    } else if happiness >= 70 {
+        (
+            "content",
+            format!(
+                "Healthy project. {:.0}% spec, {:.0}% test coverage.",
+                d.scov * 100.0,
+                d.cov * 100.0
+            ),
+        )
+    } else {
+        ("okay", "Coming along. Keep speccing.".to_string())
+    };
+
+    let next_goal = if d.specs == 0 {
+        "Write your first spec.".to_string()
+    } else if d.phantoms > 0 {
+        format!("Fix {} broken reference(s) to recover.", d.phantoms)
+    } else if d.orphans > 0 {
+        format!("Give {} orphan file(s) a spec.", d.orphans)
+    } else if d.cov < 0.75 {
+        "Raise test coverage toward 75%.".to_string()
+    } else {
+        format!("Keep the streak going ({} days).", d.streak)
+    };
+
+    Pet {
+        name: "Atlas",
+        stage,
+        stage_index,
+        level,
+        xp: xp.round() as i64,
+        xp_next: next.round() as i64,
+        xp_progress: (progress * 100.0).round() / 100.0,
+        happiness,
+        hunger,
+        energy,
+        health,
+        mood,
+        mood_reason,
+        next_goal,
+        specs: d.specs,
+        complete_specs: d.complete_specs,
+        approved_specs: d.approved_specs,
+        spec_coverage: (d.scov * 1000.0).round() / 1000.0,
+        test_coverage: (d.cov * 1000.0).round() / 1000.0,
+        orphans: d.orphans,
+        phantoms: d.phantoms,
+        streak: d.streak,
+    }
 }
 
 #[derive(Serialize)]
@@ -1182,6 +1385,83 @@ fn build_model(
         }
     });
 
+    // ---- Corvid Pet drivers (pure from the scan + git) ----
+    const CORE: [&str; 4] = ["requirements.md", "tasks.md", "context.md", "testing.md"];
+    let (mut companion_pts, mut status_pts, mut complete_specs, mut approved_specs) =
+        (0.0, 0.0, 0usize, 0usize);
+    for so in &spec_out {
+        let core_present = so
+            .companions
+            .iter()
+            .filter(|c| CORE.contains(&c.name.as_str()))
+            .count();
+        if core_present == 4 {
+            companion_pts += 6.0;
+            complete_specs += 1;
+        } else {
+            companion_pts += 1.5 * core_present as f64;
+        }
+        let st = so.status.to_lowercase();
+        if st == "approved" || st == "done" || st == "stable" {
+            status_pts += 5.0;
+            approved_specs += 1;
+        } else {
+            status_pts += 1.0;
+        }
+    }
+    let (streak, recent_w) = git
+        .map(|g| {
+            let now_day = g.now / 86_400;
+            // consecutive active days ending at the most recent active day
+            let mut streak = 0u32;
+            if let Some(&maxd) = g.days.keys().max() {
+                let mut d = maxd;
+                while g.days.contains_key(&d) {
+                    streak += 1;
+                    d -= 1;
+                }
+            }
+            // age-weighted commits over the last 14 days
+            let recent_w: f64 = g
+                .days
+                .iter()
+                .filter(|(&day, _)| day > now_day - 14)
+                .map(|(&day, &(s, c))| (s + c) as f64 * 0.5f64.powf((now_day - day) as f64 / 7.0))
+                .sum();
+            (streak, recent_w)
+        })
+        .unwrap_or((0, 0.0));
+    let stale_frac = if let Some(g) = git {
+        let cutoff = g.now - 30 * 86_400;
+        let stale = spec_out
+            .iter()
+            .filter(|so| so.updated_ts.map(|t| t < cutoff).unwrap_or(true))
+            .count();
+        if spec_out.is_empty() {
+            0.0
+        } else {
+            stale as f64 / spec_out.len() as f64
+        }
+    } else {
+        0.0
+    };
+    let pet = compute_pet(PetDrivers {
+        specs: specs.len(),
+        complete_specs,
+        approved_specs,
+        scov: coverage_pct / 100.0,
+        cov: test_coverage_pct.unwrap_or(0.0) / 100.0,
+        has_test: test_coverage_pct.is_some(),
+        orphans: cov.orphan_files,
+        phantoms: phantom_refs,
+        files: sources.len(),
+        streak,
+        recent_w,
+        stale_frac,
+        companion_pts,
+        status_pts,
+    });
+
     Model {
         project: project.to_string(),
         verdict,
@@ -1204,7 +1484,60 @@ fn build_model(
         files: file_out,
         phantoms,
         calendar,
+        pet,
     }
+}
+
+/// The geometric SVG crow + stat readout for the Corvid Pet component. The root
+/// `pet--<mood>` class drives the CSS-only pose; the SVG is a flat silhouette in
+/// the text colour so it flips with light/dark, with a teal eye and chest tuft.
+fn render_pet(p: &Pet) -> String {
+    let fed = 100u32.saturating_sub(p.hunger);
+    let bar = |label: &str, val: u32, cls: &str| {
+        format!(
+            "<div class=\"pbar\"><span class=\"pblab\">{label}</span><span class=\"pbtrack\"><span class=\"pbfill {cls}\" style=\"width:{val}%\"></span></span><span class=\"pbval\">{val}</span></div>"
+        )
+    };
+    let crow = "<svg class=\"crow\" viewBox=\"0 0 120 120\" role=\"img\" aria-label=\"Corvid pet\">\
+<g class=\"crow-legs\"><line x1=\"52\" y1=\"92\" x2=\"49\" y2=\"110\"/><line x1=\"64\" y1=\"92\" x2=\"67\" y2=\"110\"/></g>\
+<polygon class=\"crow-tail\" points=\"34,74 6,60 28,80 10,90 36,86\"/>\
+<path class=\"crow-body\" d=\"M34,74 L40,52 L58,42 L78,48 L84,70 L72,92 L46,94 Z\"/>\
+<path class=\"crow-wing\" d=\"M50,60 L76,70 L52,82 L58,68 Z\"/>\
+<g class=\"crow-head\">\
+<path class=\"crow-body\" d=\"M64,32 L84,34 L92,46 L86,58 L68,58 L62,46 Z\"/>\
+<polygon class=\"crow-beak\" points=\"92,42 110,47 92,53\"/>\
+<circle class=\"crow-eye\" cx=\"80\" cy=\"44\" r=\"3.4\"/>\
+<circle class=\"crow-pupil\" cx=\"81\" cy=\"44\" r=\"1.5\"/>\
+</g>\
+<polygon class=\"crow-tuft\" points=\"66,82 76,78 72,92\"/>\
+<g class=\"crow-z\"><text x=\"94\" y=\"30\">z</text><text x=\"104\" y=\"20\">z</text></g>\
+<g class=\"crow-burst\"><rect x=\"52\" y=\"20\" width=\"5\" height=\"5\"/><rect x=\"72\" y=\"16\" width=\"5\" height=\"5\"/><rect x=\"88\" y=\"24\" width=\"5\" height=\"5\"/></g>\
+</svg>";
+    format!(
+        "<section class=\"block comp petcard\" id=\"c-pet\" data-mood=\"{mood}\">\
+<h2>Corvid pet</h2>\
+<div class=\"petwrap pet--{mood}\">\
+<div class=\"petart\">{crow}</div>\
+<div class=\"petinfo\">\
+<div class=\"pethead\"><span class=\"petstage\">{stage}</span><span class=\"petlvl\">Lv {level}</span><span class=\"petmoodtag\">{mood}</span></div>\
+<div class=\"petxp\"><span class=\"petxpbar\" style=\"width:{prog:.0}%\"></span></div>\
+<p class=\"petxplab\">{xp} / {xp_next} XP &nbsp;·&nbsp; {reason}</p>\
+<div class=\"petbars\">{b1}{b2}{b3}{b4}</div>\
+<p class=\"petgoal\">Next: {goal}</p>\
+</div></div></section>",
+        mood = p.mood,
+        stage = esc(p.stage),
+        level = p.level,
+        prog = p.xp_progress * 100.0,
+        xp = commas(p.xp.max(0) as usize),
+        xp_next = commas(p.xp_next.max(0) as usize),
+        reason = esc(&p.mood_reason),
+        b1 = bar("happy", p.happiness, "teal"),
+        b2 = bar("health", p.health, "green"),
+        b3 = bar("fed", fed, "amber"),
+        b4 = bar("energy", p.energy, "steel"),
+        goal = esc(&p.next_goal),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1311,8 +1644,38 @@ fn render_html(m: &Model) -> Result<String> {
     let mut orphans: Vec<&FileOut> = m.files.iter().filter(|f| f.orphan).collect();
     orphans.sort_by_key(|f| std::cmp::Reverse(f.loc));
 
+    // ---- Component show/hide bar (lists only the sections we actually emit) ----
+    let mut comps: Vec<(&str, &str)> = vec![
+        ("c-verdict", "verdict"),
+        ("c-glance", "at a glance"),
+        ("c-pet", "pet"),
+    ];
+    if m.stats.has_history {
+        comps.push(("c-activity", "activity"));
+    }
+    if m.calendar.is_some() {
+        comps.push(("c-calendar", "calendar"));
+    }
+    if !orphans.is_empty() {
+        comps.push(("c-orphans", "needs a spec"));
+    }
+    comps.push(("c-graph", "spec map"));
+    if !m.specs.is_empty() {
+        comps.push(("c-specs", "specs"));
+    }
+    if !m.phantoms.is_empty() {
+        comps.push(("c-phantoms", "broken refs"));
+    }
+    h.push_str("<nav class=\"compbar\" id=\"compbar\" aria-label=\"Sections\"><span class=\"cblabel\">show</span>");
+    for (id, label) in &comps {
+        h.push_str(&format!(
+            "<button class=\"cbtoggle on\" data-target=\"{id}\">{label}</button>"
+        ));
+    }
+    h.push_str("</nav>");
+
     // ---- Plain-English verdict ----
-    h.push_str("<section class=\"verdict\">");
+    h.push_str("<section class=\"verdict comp\" id=\"c-verdict\">");
     if m.specs.is_empty() {
         h.push_str("<p class=\"big\">This project has no specs yet.</p>");
         h.push_str(&format!(
@@ -1363,7 +1726,7 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("</section>");
 
     // ---- At a glance: numbers, each with a plain definition ----
-    h.push_str("<section class=\"stats glance\">");
+    h.push_str("<section class=\"stats glance comp\" id=\"c-glance\">");
     stat(
         &mut h,
         &format!("{:.0}%", s.coverage_pct),
@@ -1419,11 +1782,14 @@ fn render_html(m: &Model) -> Result<String> {
     }
     h.push_str("</section>");
 
+    // ---- Corvid pet ----
+    h.push_str(&render_pet(&m.pet));
+
     // ---- Spec activity heat map (git-driven) ----
     if s.has_history && !m.specs.is_empty() {
         let mut act: Vec<&SpecOut> = m.specs.iter().collect();
         act.sort_by_key(|s| std::cmp::Reverse(s.updated_ts));
-        h.push_str("<section class=\"block\"><h2>Spec activity</h2>");
+        h.push_str("<section class=\"block comp\" id=\"c-activity\"><h2>Spec activity</h2>");
         h.push_str("<p class=\"hint\">How recently each spec last changed (its doc, companions, or code), hottest first. Cold tiles are specs nothing has touched in a while, the most likely to be stale.</p>");
         h.push_str("<div class=\"heatgrid\">");
         for spec in &act {
@@ -1453,7 +1819,9 @@ fn render_html(m: &Model) -> Result<String> {
         let now_day = cal.now_day;
         let now_wd = weekday(now_day);
         let cols: i64 = 53;
-        h.push_str("<section class=\"block\"><h2>Contribution calendar</h2>");
+        h.push_str(
+            "<section class=\"block comp\" id=\"c-calendar\"><h2>Contribution calendar</h2>",
+        );
         h.push_str("<p class=\"hint\">Every day of the last year. Teal = a spec doc changed, amber = code changed, green = both changed the same day. Brighter means more commits.</p>");
         h.push_str("<div class=\"calscroll\"><div class=\"calwrap\">");
         // month labels aligned to week columns
@@ -1503,7 +1871,7 @@ fn render_html(m: &Model) -> Result<String> {
 
     // ---- What needs a spec (the action list) ----
     if !orphans.is_empty() {
-        h.push_str("<section class=\"block\"><h2>What needs a spec</h2>");
+        h.push_str("<section class=\"block comp\" id=\"c-orphans\"><h2>What needs a spec</h2>");
         h.push_str(&format!(
             "<p class=\"hint\">These {} source files have no spec describing them, biggest first. Writing a spec that lists them is how you raise the number above.</p>",
             s.orphan_files
@@ -1528,7 +1896,7 @@ fn render_html(m: &Model) -> Result<String> {
     }
 
     // ---- Explore the spec map (the graph, now a labelled, collapsible section) ----
-    h.push_str("<details open class=\"explore\"><summary>Explore the spec map</summary><div class=\"explore-body\">");
+    h.push_str("<details open class=\"explore comp\" id=\"c-graph\"><summary>Explore the spec map</summary><div class=\"explore-body\">");
     h.push_str("<p class=\"hint\">Each spec is a bubble; the code files it governs are the dots inside it. A file shared by two specs sits where their bubbles overlap. Files with no spec float outside. Click a bubble to focus it, drag it to move it, drag the background to pan, scroll to zoom.</p>");
     h.push_str("<div class=\"maplegend\">");
     h.push_str("<span><span class=\"k spec\"></span>spec (bubble)</span>");
@@ -1564,7 +1932,7 @@ fn render_html(m: &Model) -> Result<String> {
 
     // Spec cards
     if !m.specs.is_empty() {
-        h.push_str("<section class=\"block\"><h2>Your specs</h2>");
+        h.push_str("<section class=\"block comp\" id=\"c-specs\"><h2>Your specs</h2>");
         h.push_str("<p class=\"hint\">Each spec, the code it governs, and how much of the project it covers.</p>");
         h.push_str("<div class=\"cards\">");
     }
@@ -1626,7 +1994,9 @@ fn render_html(m: &Model) -> Result<String> {
 
     // Broken spec references (phantoms)
     if !m.phantoms.is_empty() {
-        h.push_str("<section class=\"block\"><h2>Broken spec references</h2>");
+        h.push_str(
+            "<section class=\"block comp\" id=\"c-phantoms\"><h2>Broken spec references</h2>",
+        );
         h.push_str(
             "<p class=\"hint\">A spec lists these files, but they are not on disk, most likely renamed or deleted. Update the spec's <code>files:</code> list to match.</p>",
         );
@@ -1647,6 +2017,7 @@ fn render_html(m: &Model) -> Result<String> {
         "<script id=\"atlas-data\" type=\"application/json\">{data_json}</script>"
     ));
     h.push_str(GRAPH_JS);
+    h.push_str(COMPONENTS_JS);
     h.push_str("</main></body></html>");
     Ok(h)
 }
@@ -1694,3 +2065,4 @@ fn meta(h: &mut String, key: &str, val: &str) {
 
 const STYLE: &str = include_str!("style.css");
 const GRAPH_JS: &str = include_str!("graph.js");
+const COMPONENTS_JS: &str = include_str!("components.js");

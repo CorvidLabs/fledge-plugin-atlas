@@ -47,6 +47,15 @@ fledge atlas -o report.html  # choose the output path
   "by recency" graph color mode. Each spec's **companion docs** (requirements.md,
   tasks.md, context.md, testing.md) are listed with their own last-changed date.
 
+- **Corvid Pet** — a gamified, **stateless** desk-crow whose level, mood, and
+  stage (🥚 Egg → ✨ Legendary Corvid) are pure functions of the repo scan + git,
+  so it's always accurate with no saved state. Specs feed it, coverage is its
+  health, a commit streak levels it up, orphans and broken references make it
+  hungry or sick. Also in `--json` under `pet` (with `mood`, `stats`, `drivers`,
+  `next_goal`) so an agent can report the project's "vibe" too.
+- **Show/hide bar** — every section above is a component with a toggle in the
+  sticky bar at the top; your choices persist in the browser.
+
 ## How it reads a project
 
 - **Specs**: every `*.spec.md` (spec-sync format). The frontmatter's `files:`
