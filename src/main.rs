@@ -202,8 +202,8 @@ fn parse_spec(root: &Path, path: &Path) -> Option<Spec> {
         let trimmed = line.trim_end();
         if in_files {
             let t = trimmed.trim_start();
-            if t.starts_with("- ") {
-                let f = normalize(t[2..].trim().trim_matches(['"', '\'']));
+            if let Some(rest) = t.strip_prefix("- ") {
+                let f = normalize(rest.trim().trim_matches(['"', '\'']));
                 if !f.is_empty() {
                     files.push(f);
                 }
@@ -867,7 +867,7 @@ fn render_html(m: &Model) -> Result<String> {
 
     // Uncovered code
     let mut orphans: Vec<&FileOut> = m.files.iter().filter(|f| f.orphan).collect();
-    orphans.sort_by(|a, b| b.loc.cmp(&a.loc));
+    orphans.sort_by_key(|f| std::cmp::Reverse(f.loc));
     if !orphans.is_empty() {
         h.push_str("<section class=\"block\"><h2>Uncovered code</h2>");
         h.push_str("<p class=\"hint\">Source files no spec references, largest first. The domain no contract describes.</p>");
