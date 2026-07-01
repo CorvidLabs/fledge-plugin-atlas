@@ -17,12 +17,20 @@
   // Shade chart-4 (green) toward bad (clay) by coverage percentage.
   const covFill = pct => `color-mix(in srgb, var(--chart-4) ${Math.round(clamp(pct,0,100))}%, var(--bad))`;
 
-  // A source file's treemap / covered colour.
-  function fileFill(f){
+  // Spec index -> colour / name, so files can be coloured by the spec that owns them.
+  const specColor = {}, specName = {};
+  specs.forEach(s => { if(s && s.index != null){ specColor[s.index] = s.color; specName[s.index] = s.module; } });
+  const ownerColor = f => (Array.isArray(f.specs) && f.specs.length) ? (specColor[f.specs[0]] || 'var(--chart-1)') : 'var(--chart-1)';
+
+  // A source file's tile / arc colour: gray when unspecced; a clay->green tint when
+  // test coverage is known; otherwise the colour of the spec that owns it, so the
+  // map reads as spec territories instead of a flat wash.
+  function fillFor(f, specC){
     if(f.orphan) return NOSPEC;
     if(hasCov && f.test_pct != null) return covFill(f.test_pct);
-    return 'var(--chart-1)';
+    return specC || 'var(--chart-1)';
   }
+  function fileFill(f){ return fillFor(f, ownerColor(f)); }
 
   const note = (id, text) => {
     const el = document.getElementById(id);
@@ -102,6 +110,7 @@
       rc.setAttribute('x', r.x); rc.setAttribute('y', r.y);
       rc.setAttribute('width', Math.max(0, r.w)); rc.setAttribute('height', Math.max(0, r.h));
       rc.style.fill = fileFill(f);
+      rc.style.stroke = 'var(--bg)'; rc.style.strokeWidth = '1';
       cell.appendChild(rc);
       // Only label roomy cells; keep it clean.
       if(r.w > 46 && r.h > 20){
@@ -111,7 +120,10 @@
         t.textContent = name.length > Math.floor(r.w/7) ? name.slice(0, Math.max(1, Math.floor(r.w/7)-1)) + '…' : name;
         cell.appendChild(t);
       }
-      const state = f.orphan ? 'no spec' : (f.overlap ? 'shared by 2+ specs' : 'has a spec');
+      const owners = (Array.isArray(f.specs) ? f.specs : []).map(i=>specName[i]).filter(Boolean);
+      const state = f.orphan ? 'no spec'
+        : (owners.length ? (f.overlap ? 'shared: ' : 'spec: ') + owners.join(', ')
+           : (f.overlap ? 'shared by 2+ specs' : 'has a spec'));
       const tc = f.test_pct != null ? ' · ' + Math.round(f.test_pct) + '% tested' : '';
       bindTip(host, tip, cell, ()=>`<b>${esc(f.path.split('/').pop())}</b><span class="sub">${f.loc} LOC · ${esc(f.lang)}</span><span class="sub">${esc(state)}${tc}</span>`);
       svg.appendChild(cell);
@@ -173,7 +185,8 @@
         if(fspan <= 0) return;
         const o = mk('path', 'sb-arc');
         o.setAttribute('d', arcPath(cx, cy, rMid+3, rOut, fa, fa+fspan));
-        o.style.fill = f.orphan ? NOSPEC : (hasCov && f.test_pct != null ? covFill(f.test_pct) : 'var(--chart-1)');
+        o.style.fill = fillFor(f, seg.color);
+        o.style.fillOpacity = f.orphan ? 1 : 0.72;
         const tc = f.test_pct != null ? ' · ' + Math.round(f.test_pct) + '% tested' : '';
         bindTip(host, tip, o, ()=>`<b>${esc(f.path.split('/').pop())}</b><span class="sub">${f.loc} LOC${tc}</span><span class="sub">${f.orphan ? 'no spec' : esc(seg.label)}</span>`);
         svg.appendChild(o);

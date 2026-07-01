@@ -4240,7 +4240,7 @@ fn render_html(root: &Path, m: &Model) -> Result<String> {
     // ---- Codebase treemap (files sized by lines) ----
     if !m.files.is_empty() {
         h.push_str("<section class=\"block comp\" id=\"c-treemap\"><h2>Codebase treemap</h2>");
-        h.push_str("<p class=\"hint\">Every source file, sized by its lines of code. Files with no spec are gray; spec-covered files are green, tinted toward clay as their test coverage falls. Hover a tile for details.</p>");
+        h.push_str("<p class=\"hint\">Every source file, sized by its lines of code and coloured by the spec that owns it, so each spec reads as a territory. Files with no spec are gray. When test coverage is known, tiles instead run clay (untested) to green (covered). Hover a tile for its spec and coverage.</p>");
         h.push_str("<div class=\"delight\" id=\"tm-wrap\"><svg id=\"tm-svg\" role=\"img\" aria-label=\"Codebase treemap\"></svg><div id=\"tm-tip\" class=\"tip\"></div></div>");
         h.push_str("</section>");
     }
