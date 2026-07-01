@@ -1,0 +1,19 @@
+[plugin]
+name = "fledge-plugin-atlas"
+version = "0.1.0"
+description = "Local HTML atlas of a project: spec coverage, code, and how specs and source overlap. Built in Rust."
+author = "0xLeif"
+license = "MIT"
+
+[[commands]]
+name = "atlas"
+description = "Generate a local HTML atlas of the project's specs, code, and their overlap"
+binary = "target/release/fledge-atlas"
+
+[hooks]
+build = "cargo build --release"
+
+[capabilities]
+exec = false
+store = false
+metadata = false
