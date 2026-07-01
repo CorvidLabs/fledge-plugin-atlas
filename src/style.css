@@ -334,4 +334,24 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .trust-verdict{font-size:11px;text-transform:uppercase;letter-spacing:.06em}
 .trust-verdict.good{color:var(--success)}.trust-verdict.warn{color:var(--warn)}.trust-verdict.bad{color:var(--bad)}
 .trust-none{color:var(--faint)}
+/* inline spec-prose reader: a collapsed, lazily revealed markdown body per card */
+.specprose{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.specprose>summary{font-family:var(--font-mono);font-size:12px;letter-spacing:.02em;color:var(--accent);cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:7px;user-select:none}
+.specprose>summary::-webkit-details-marker{display:none}
+.specprose>summary::before{content:"+";display:inline-block;width:1em;text-align:center;color:var(--faint)}
+.specprose[open]>summary::before{content:"-"}
+.specprose>summary:hover{color:var(--accent-strong)}
+.specprose .prose{max-width:70ch;margin-top:12px;color:var(--muted);font-size:14px;line-height:1.6}
+.specprose .prose>*:first-child{margin-top:0}
+.specprose .prose h4,.specprose .prose h5,.specprose .prose h6{font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text);margin:18px 0 8px}
+.specprose .prose h4{font-size:13px}.specprose .prose h5{font-size:12px}.specprose .prose h6{font-size:11px;color:var(--muted)}
+.specprose .prose p{margin:0 0 10px}
+.specprose .prose ul,.specprose .prose ol{margin:0 0 10px;padding-left:20px}
+.specprose .prose li{margin:2px 0}
+.specprose .prose strong{color:var(--text);font-weight:600}
+.specprose .prose a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 45%,transparent)}
+.specprose .prose a:hover{color:var(--accent-strong)}
+.specprose .prose code{font-family:var(--font-mono);font-size:.88em;color:var(--accent)}
+.specprose .prose pre.cb{background:var(--surface-strong);border:1px solid var(--line);padding:12px 14px;overflow-x:auto;margin:0 0 12px}
+.specprose .prose pre.cb code{color:var(--text);font-size:12px;line-height:1.5}
 </style>
