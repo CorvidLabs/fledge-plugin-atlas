@@ -2214,6 +2214,12 @@ fn build_model(
             sources.len(),
             commas(cov.total_loc)
         )
+    } else if sources.is_empty() {
+        format!(
+            "{project} has {} spec{} but no source files to cover yet.",
+            specs.len(),
+            if specs.len() == 1 { "" } else { "s" }
+        )
     } else {
         let mut v = format!("{coverage_pct:.0}% of {project}'s code is covered by a spec.");
         if cov.orphan_files == 0 {
@@ -2974,10 +2980,14 @@ fn render_html(m: &Model) -> Result<String> {
     // Health bar + status chip.
     let cov_w = s.coverage_pct;
     h.push_str("<div class=\"cbar big\">");
-    h.push_str(&format!(
-        "<span class=\"seg covered\" style=\"width:{cov_w:.2}%\"></span><span class=\"seg orphan\" style=\"width:{:.2}%\"></span>",
-        100.0 - cov_w
-    ));
+    // With no code there is nothing to cover: show a neutral empty track, not a
+    // full-width red "orphan" bar.
+    if s.total_loc > 0 {
+        h.push_str(&format!(
+            "<span class=\"seg covered\" style=\"width:{cov_w:.2}%\"></span><span class=\"seg orphan\" style=\"width:{:.2}%\"></span>",
+            100.0 - cov_w
+        ));
+    }
     h.push_str("</div>");
     let (chip_cls, chip_txt) = health(s);
     h.push_str(&format!(
@@ -3056,9 +3066,28 @@ fn render_html(m: &Model) -> Result<String> {
         "<p class=\"hint\">The whole cockpit in one row. <span class=\"chip {vchip_cls}\">{vchip_txt}</span></p>"
     ));
     h.push_str("<div class=\"vitals\">");
-    vital(&mut h, &format!("{:.0}%", s.coverage_pct), "spec coverage", "good");
+    // Tone from the value, not hardcoded: a low coverage number must not paint
+    // itself in the healthy accent color. Neutral when there is no code at all.
+    let has_code = s.source_files > 0;
+    let cov_tone = |pct: f64| -> &'static str {
+        if !has_code {
+            ""
+        } else if pct >= 70.0 {
+            "good"
+        } else if pct >= 40.0 {
+            ""
+        } else {
+            "warn"
+        }
+    };
+    vital(
+        &mut h,
+        &format!("{:.0}%", s.coverage_pct),
+        "spec coverage",
+        cov_tone(s.coverage_pct),
+    );
     if let Some(tc) = s.test_coverage_pct {
-        vital(&mut h, &format!("{tc:.0}%"), "test coverage", "good");
+        vital(&mut h, &format!("{tc:.0}%"), "test coverage", cov_tone(tc));
     }
     vital(
         &mut h,
@@ -3613,6 +3642,9 @@ fn debt_seg(h: &mut String, val: f64, token: &str, label: &str) {
 fn health(s: &Stats) -> (&'static str, &'static str) {
     if s.specs == 0 {
         ("bad", "no specs yet")
+    } else if s.source_files == 0 || s.total_loc == 0 {
+        // Specs but no code to cover is not a coverage gap.
+        ("", "no code yet")
     } else if s.coverage_pct >= 80.0 {
         ("ok", "healthy")
     } else if s.coverage_pct >= 50.0 {
