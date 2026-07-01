@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -163,6 +164,7 @@ fn run() -> Result<()> {
     let git = load_git(&root, &specs, &sources);
     let mut model = build_model(&project, &specs, &sources, &coverage, git.as_ref());
     model.threemd = find_threemd(&root);
+    model.trust = gather_trust(&root);
 
     if cli.review {
         let need: Vec<&SpecOut> = model.specs.iter().filter(|s| s.needs_review).collect();
@@ -1584,6 +1586,59 @@ struct Model {
     /// can render them inline (and agents can read them).
     #[serde(default)]
     threemd: Vec<ThreeMdDoc>,
+    /// Optional "trust" panel sourced from sibling CorvidLabs tools: `attest`
+    /// (signed provenance in git notes) and `augur` (deterministic change-risk).
+    /// `None` when neither tool has anything to say about this project, so a
+    /// normal run emits no trust section, no compbar chip, and no JSON noise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trust: Option<Trust>,
+}
+
+/// Trust and provenance signals from sibling tools, each independently optional.
+#[derive(Serialize, Default)]
+struct Trust {
+    /// Signed attestations recorded by `attest` in git notes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attest: Option<AttestSummary>,
+    /// The current change-risk verdict from `augur`, when there is a change to
+    /// assess and the binary is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    augur: Option<AugurSummary>,
+}
+
+/// A roll-up of the attestations found across the repository's git notes.
+#[derive(Serialize, Default)]
+struct AttestSummary {
+    /// Total attestations parsed across all attested commits.
+    count: usize,
+    /// The most recent attestations, newest first (capped for display).
+    recent: Vec<Attestation>,
+}
+
+/// One provenance record: who or what vetted a commit, and how sure they were.
+#[derive(Serialize, Default)]
+struct Attestation {
+    /// Short commit SHA the attestation is about.
+    commit: String,
+    /// Who or what reviewed, e.g. `agent:ci` or `human:leif`.
+    reviewer: String,
+    /// The recorded verdict (`proceed` / `review` / `block`), or empty if none.
+    verdict: String,
+    /// Reviewer confidence in `0...1`, when recorded.
+    confidence: Option<f64>,
+    /// Date the attestation was made, `YYYY-MM-DD`.
+    when: String,
+}
+
+/// The current `augur` change-risk verdict for the working tree.
+#[derive(Serialize, Default)]
+struct AugurSummary {
+    /// `proceed`, `review`, or `block`.
+    verdict: String,
+    /// Risk score `0...100`, when reported.
+    score: Option<f64>,
+    /// The top contributing risk signals, most significant first.
+    signals: Vec<String>,
 }
 
 /// A parsed `.3md` document (Markdown with a Z axis) discovered in the project.
@@ -2240,6 +2295,7 @@ fn build_model(
         calendar,
         pet,
         threemd: Vec::new(),
+        trust: None,
     }
 }
 
@@ -2500,6 +2556,232 @@ fn status_class(status: &str) -> &'static str {
 // HTML rendering
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Trust and provenance (optional, sourced from sibling tools attest + augur)
+// ---------------------------------------------------------------------------
+
+/// Gather the optional trust panel for `root`, combining `attest` (signed
+/// provenance in git notes) and `augur` (deterministic change-risk).
+///
+/// Every source is best-effort: any missing tool, missing data, non-zero exit,
+/// unparsable output, or slowness collapses that source to `None` without a
+/// panic or a line of stderr. When neither source has anything, the whole panel
+/// is `None`, so a normal run renders no trust section at all.
+fn gather_trust(root: &Path) -> Option<Trust> {
+    let attest = gather_attest(root);
+    let augur = gather_augur(root);
+    if attest.is_none() && augur.is_none() {
+        return None;
+    }
+    Some(Trust { attest, augur })
+}
+
+/// Whether `root` is inside a git work tree. Used to avoid spawning tools that
+/// only make sense in a repository.
+fn is_git_repo(root: &Path) -> bool {
+    Command::new("git")
+        .args([
+            "-C",
+            &root.to_string_lossy(),
+            "rev-parse",
+            "--is-inside-work-tree",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Format a unix timestamp as a bare `YYYY-MM-DD`, or "unknown" for a
+/// missing/zero timestamp. Reuses the calendar's civil-from-days conversion.
+fn fmt_date(ts: i64) -> String {
+    if ts <= 0 {
+        return "unknown".into();
+    }
+    let (y, m, d) = civil_from_days(ts / 86_400);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Read `attest` provenance straight from git notes, with no dependency on the
+/// `attest` binary: attestations are JSON Lines under `refs/notes/attest`.
+///
+/// Returns `None` when the repo has no attest notes (or is not a repo).
+fn gather_attest(root: &Path) -> Option<AttestSummary> {
+    // `git notes --ref=<ref>` expands a bare name to `refs/notes/<ref>`.
+    for note_ref in ["attest", "attestations"] {
+        let out = Command::new("git")
+            .args([
+                "-C",
+                &root.to_string_lossy(),
+                "notes",
+                &format!("--ref={note_ref}"),
+                "list",
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            continue;
+        }
+        let commits: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            // `git notes list` prints "<note-sha> <annotated-commit-sha>".
+            .filter_map(|line| line.split_whitespace().nth(1).map(|s| s.to_string()))
+            .collect();
+        if commits.is_empty() {
+            continue;
+        }
+        if let Some(summary) = read_attest_notes(root, note_ref, &commits) {
+            return Some(summary);
+        }
+    }
+    None
+}
+
+/// Read and parse the attestation JSON Lines for each attested commit, newest
+/// first. Bounded so a repository with a huge provenance history stays fast.
+fn read_attest_notes(root: &Path, note_ref: &str, commits: &[String]) -> Option<AttestSummary> {
+    let mut all: Vec<(i64, Attestation)> = Vec::new();
+    for sha in commits.iter().take(300) {
+        let out = match Command::new("git")
+            .args([
+                "-C",
+                &root.to_string_lossy(),
+                "notes",
+                &format!("--ref={note_ref}"),
+                "show",
+                sha,
+            ])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            _ => continue,
+        };
+        let body = String::from_utf8_lossy(&out.stdout);
+        for line in body.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let commit = v.get("commit").and_then(|x| x.as_str()).unwrap_or(sha);
+            let short: String = commit.chars().take(10).collect();
+            let reviewer = v
+                .get("reviewer")
+                .and_then(|x| x.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let verdict = v
+                .get("verdict")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let confidence = v.get("confidence").and_then(|x| x.as_f64());
+            let ts = v.get("timestamp").and_then(|x| x.as_i64()).unwrap_or(0);
+            all.push((
+                ts,
+                Attestation {
+                    commit: short,
+                    reviewer,
+                    verdict,
+                    confidence,
+                    when: fmt_date(ts),
+                },
+            ));
+        }
+    }
+    if all.is_empty() {
+        return None;
+    }
+    let count = all.len();
+    all.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let recent: Vec<Attestation> = all.into_iter().take(8).map(|(_, a)| a).collect();
+    Some(AttestSummary { count, recent })
+}
+
+/// Capture `augur`'s current change-risk verdict for `root`, when the binary is
+/// available and there is an actual change to assess.
+///
+/// Returns `None` if `root` is not a git repo, `augur` is absent, it errors, it
+/// is too slow (time-boxed), or the working tree is clean (no change to grade),
+/// so a quiet repo shows no augur panel.
+fn gather_augur(root: &Path) -> Option<AugurSummary> {
+    if !is_git_repo(root) {
+        return None;
+    }
+    let bytes = run_augur_json(root, Duration::from_secs(8))?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    // No files assessed => no working-tree change => augur has nothing to add.
+    let files = match v.get("files").and_then(|f| f.as_array()) {
+        Some(f) if !f.is_empty() => f,
+        _ => return None,
+    };
+    let verdict = v
+        .get("verdict")
+        .and_then(|x| x.as_str())
+        .unwrap_or("proceed")
+        .to_string();
+    let score = v.get("riskScore").and_then(|x| x.as_f64());
+
+    // Rank signals by contribution (risk * weight), keep the strongest one per
+    // signal name, and surface the top three as "name: detail".
+    let mut ranked: Vec<(f64, String)> = Vec::new();
+    for f in files {
+        let Some(sigs) = f.get("signals").and_then(|s| s.as_array()) else {
+            continue;
+        };
+        for s in sigs {
+            let name = s.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let detail = s.get("detail").and_then(|x| x.as_str()).unwrap_or("");
+            let risk = s.get("risk").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let weight = s.get("weight").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            if name.is_empty() || risk <= 0.0 {
+                continue;
+            }
+            ranked.push((risk * weight, format!("{name}: {detail}")));
+        }
+    }
+    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut signals: Vec<String> = Vec::new();
+    for (_, label) in ranked {
+        let key = label.split(':').next().unwrap_or("").to_string();
+        if seen.insert(key) {
+            signals.push(label);
+        }
+        if signals.len() >= 3 {
+            break;
+        }
+    }
+
+    Some(AugurSummary {
+        verdict,
+        score,
+        signals,
+    })
+}
+
+/// Run `augur check --json` in `root`, time-boxed. Reads output on a worker
+/// thread so a slow or hung `augur` can never stall the atlas: on timeout we
+/// stop waiting and return `None`, leaving the detached process to exit on its
+/// own. Absence of the binary also yields `None`.
+fn run_augur_json(root: &Path, timeout: Duration) -> Option<Vec<u8>> {
+    let root = root.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let out = Command::new("augur")
+            .args(["check", "--json", "-C", &root.to_string_lossy()])
+            .stderr(std::process::Stdio::null())
+            .output();
+        let _ = tx.send(out);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(out)) if out.status.success() => Some(out.stdout),
+        _ => None,
+    }
+}
+
 fn render_html(m: &Model) -> Result<String> {
     // Embed the exact model the graph draws. Escape `</` so a path can never
     // break out of the <script> block.
@@ -2556,6 +2838,9 @@ fn render_html(m: &Model) -> Result<String> {
     }
     if !m.phantoms.is_empty() {
         comps.push(("c-phantoms", "broken refs"));
+    }
+    if m.trust.is_some() {
+        comps.push(("c-trust", "trust"));
     }
     h.push_str("<nav class=\"compbar\" id=\"compbar\" aria-label=\"Sections\"><span class=\"cblabel\">show</span>");
     for (id, label) in &comps {
@@ -3038,6 +3323,11 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str("</section>");
     }
 
+    // Trust and provenance (attest + augur), only when a source has data.
+    if let Some(trust) = &m.trust {
+        render_trust(&mut h, trust);
+    }
+
     // Broken spec references (phantoms)
     if !m.phantoms.is_empty() {
         h.push_str(
@@ -3070,6 +3360,98 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str(SINCE_JS);
     h.push_str("</main></body></html>");
     Ok(h)
+}
+
+/// Render the trust-and-provenance section: the `augur` verdict chip with its
+/// top risk signals, and the `attest` provenance roll-up with a small table of
+/// recent attestations. Whichever source is `None` is simply omitted.
+fn render_trust(h: &mut String, t: &Trust) {
+    h.push_str("<section class=\"block comp\" id=\"c-trust\"><h2>Trust and provenance</h2>");
+    h.push_str(
+        "<p class=\"hint\">Independent trust signals from sibling tools: <code>augur</code> grades how risky the current change is, and <code>attest</code> is the durable, optionally-signed record of who or what vetted each commit.</p>",
+    );
+
+    // ---- augur: current change-risk verdict ----
+    if let Some(a) = &t.augur {
+        let cls = augur_chip_class(&a.verdict);
+        h.push_str("<div class=\"trust-card\"><p class=\"legend\">");
+        h.push_str(&format!(
+            "<span class=\"chip {cls}\">{}</span>",
+            esc(&a.verdict.to_uppercase())
+        ));
+        if let Some(score) = a.score {
+            h.push_str(&format!(
+                " &nbsp; <span class=\"trust-meta\">augur risk {:.0}/100 on the working tree</span>",
+                score
+            ));
+        } else {
+            h.push_str(" &nbsp; <span class=\"trust-meta\">augur working-tree verdict</span>");
+        }
+        h.push_str("</p>");
+        if !a.signals.is_empty() {
+            h.push_str("<ul class=\"trust-signals\">");
+            for sig in &a.signals {
+                h.push_str(&format!("<li>{}</li>", esc(sig)));
+            }
+            h.push_str("</ul>");
+        }
+        h.push_str("</div>");
+    }
+
+    // ---- attest: signed provenance roll-up ----
+    if let Some(at) = &t.attest {
+        let noun = if at.count == 1 {
+            "attestation"
+        } else {
+            "attestations"
+        };
+        h.push_str(&format!(
+            "<p class=\"legend trust-count\"><b>{}</b> {} recorded in git notes.</p>",
+            at.count, noun
+        ));
+        if !at.recent.is_empty() {
+            h.push_str(
+                "<table class=\"list trust-table\"><thead><tr><th>commit</th><th>reviewer</th><th>verdict</th><th class=\"num\">confidence</th><th>date</th></tr></thead><tbody>",
+            );
+            for r in &at.recent {
+                let verdict_cell = if r.verdict.is_empty() {
+                    "<span class=\"trust-none\">--</span>".to_string()
+                } else {
+                    format!(
+                        "<span class=\"trust-verdict {}\">{}</span>",
+                        augur_chip_class(&r.verdict),
+                        esc(&r.verdict)
+                    )
+                };
+                let conf = match r.confidence {
+                    Some(c) => format!("{:.0}%", (c * 100.0).round()),
+                    None => "--".into(),
+                };
+                h.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td class=\"num\">{}</td><td class=\"lang\">{}</td></tr>",
+                    esc(&r.commit),
+                    esc(&r.reviewer),
+                    verdict_cell,
+                    esc(&conf),
+                    esc(&r.when)
+                ));
+            }
+            h.push_str("</tbody></table>");
+        }
+    }
+
+    h.push_str("</section>");
+}
+
+/// Map a verdict word to a chip color class: `proceed` reads as good (success),
+/// `review` as a caution, `block` as bad.
+fn augur_chip_class(verdict: &str) -> &'static str {
+    match verdict {
+        "proceed" => "good",
+        "review" => "warn",
+        "block" => "bad",
+        _ => "",
+    }
 }
 
 fn stat(h: &mut String, value: &str, label: &str, define: &str, accent: bool) {

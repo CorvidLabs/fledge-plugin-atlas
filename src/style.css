@@ -319,4 +319,17 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:v
 .qd-dotlabel{font-family:var(--font-mono);font-size:12px}
 #qd-svg .qd-pt circle{stroke-width:1.5;cursor:default}
 #qd-svg .qd-pt:hover circle{stroke:var(--accent);stroke-width:2}
+/* trust and provenance (attest + augur) */
+.chip.good{color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,transparent)}
+.trust-card{margin:0 0 18px}
+.trust-meta{color:var(--muted);font-size:13px;font-family:var(--font-mono)}
+.trust-signals{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.trust-signals li{font-family:var(--font-mono);font-size:13px;color:var(--text);border-left:2px solid var(--steel);padding:2px 0 2px 11px}
+.trust-count{margin:0 0 10px}
+.trust-table{margin-top:4px}
+.trust-table th{text-align:left;font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);font-weight:400;border-bottom:1px solid var(--line);padding:6px 12px}
+.trust-table th.num{text-align:right}
+.trust-verdict{font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.trust-verdict.good{color:var(--success)}.trust-verdict.warn{color:var(--warn)}.trust-verdict.bad{color:var(--bad)}
+.trust-none{color:var(--faint)}
 </style>
