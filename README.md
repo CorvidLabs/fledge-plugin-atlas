@@ -73,6 +73,21 @@ Scrub the Z axis to walk the project forward through time.
   "by recency" graph color mode. Each spec's **companion docs** (requirements.md,
   tasks.md, context.md, testing.md) are listed with their own last-changed date.
 
+- **Project vitals** — a cockpit of the numbers that matter (spec coverage,
+  test coverage, orphans, overlap, broken refs, specs needing review) up top.
+- **Spec-debt scoreboard** — every spec ranked worst-first by a 0 to 100 debt
+  score (needs-review, spec-sync drift, low test coverage, staleness, missing
+  companions), with a bar that breaks the score into its factors.
+- **Since you last looked** — remembers your last visit in the browser and
+  lists which specs changed since, so a returning reviewer sees the delta first.
+- **Delight views** — a **codebase treemap** (files sized by lines, coloured by
+  coverage), a **coverage sunburst** (specs to files, covered vs not), and a
+  **churn vs coverage** quadrant that flags the high-change, low-coverage corner.
+- **Trust and provenance** — auto-detected, shown only when the sibling tools
+  have data: [`augur`](https://github.com/CorvidLabs/augur)'s current change-risk
+  verdict, and recent [`attest`](https://github.com/CorvidLabs/attest)
+  attestations (reviewer, verdict, confidence) read straight from git notes.
+  Also in `--json` under `trust` when present.
 - **Corvid Pet** — a gamified, **stateless** desk-crow whose level, mood, and
   stage (🥚 Egg → ✨ Legendary Corvid) are pure functions of the repo scan + git,
   so it's always accurate with no saved state. Specs feed it, coverage is its
