@@ -1,6 +1,6 @@
 [plugin]
 name = "fledge-plugin-atlas"
-version = "0.1.2"
+version = "0.1.3"
 description = "Local HTML atlas of a project: spec coverage, code, and how specs and source overlap. Built in Rust."
 author = "0xLeif"
 license = "MIT"

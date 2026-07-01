@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.3] - 2026-07-01
+
+### Other
+
+- Add: test suite, spec-sync specs + companions, and CI governance gate (a259299)
+
 ## [v0.1.2] - 2026-07-01
 
 ### Other
