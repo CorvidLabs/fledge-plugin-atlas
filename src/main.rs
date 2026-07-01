@@ -80,6 +80,11 @@ struct Cli {
     #[arg(long, value_name = "MODULE")]
     spec: Option<String>,
 
+    /// Write a `.3md` spec deck (one plane per spec) instead of HTML. Open it in
+    /// the 3md viewer to scrub through the project spec by spec.
+    #[arg(long = "3md")]
+    three_md: bool,
+
     /// Open the generated HTML in the default browser when done.
     #[arg(long)]
     open: bool,
@@ -149,6 +154,20 @@ fn run() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&model)?);
         return Ok(());
     }
+    if cli.three_md {
+        let out = cli
+            .out
+            .unwrap_or_else(|| root.join(format!("{project}.3md")));
+        let doc = render_3md(&root, &specs, &sources, &model);
+        fs::write(&out, doc).with_context(|| format!("writing {}", out.display()))?;
+        println!(
+            "3md spec deck: {} planes ({} specs)",
+            model.specs.len() + 1,
+            model.specs.len()
+        );
+        println!("wrote {}", out.display());
+        return Ok(());
+    }
 
     let out = cli
         .out
@@ -215,6 +234,138 @@ fn emit_spec_detail(
     });
     println!("{}", serde_json::to_string_pretty(&detail)?);
     Ok(())
+}
+
+/// Render the project as a `.3md` spec deck: an overview plane (z=0) plus one
+/// plane per spec, ordered biggest-first, cross-linked. Opens in the 3md viewer
+/// as a scrubbable, plane-addressable briefing for humans and agents alike.
+fn render_3md(_root: &Path, _specs: &[Spec], sources: &[Source], model: &Model) -> String {
+    let s = &model.stats;
+    let mut order: Vec<&SpecOut> = model.specs.iter().collect();
+    order.sort_by(|a, b| b.share_pct.total_cmp(&a.share_pct));
+    let mut zmap: BTreeMap<usize, usize> = BTreeMap::new();
+    for (i, sp) in order.iter().enumerate() {
+        zmap.insert(sp.index, i + 1);
+    }
+
+    let mut d = String::with_capacity(16 * 1024);
+    d.push_str("---\n3md: 1.0\naxis: layer\n");
+    d.push_str(&format!("title: {} spec atlas\n", model.project));
+    d.push_str(&format!("project: {}\n", model.project));
+    d.push_str(&format!("specs: {}\n", s.specs));
+    d.push_str(&format!("spec_coverage: {:.0}%\n", s.coverage_pct));
+    d.push_str("generated_by: fledge atlas\n---\n\n");
+
+    d.push_str(&model.verdict);
+    d.push_str("\n\nEach plane is one spec: what it governs, its companion docs, and whether it needs review. Scrub the Z axis to move spec by spec.\n\n");
+
+    // ---- z=0 overview ----
+    d.push_str("@plane z=0 label=\"Overview\"\n");
+    d.push_str(&format!("# {} atlas\n\n", model.project));
+    d.push_str(&format!("- **Health:** {}\n", model.health));
+    d.push_str(&format!(
+        "- **Spec coverage:** {:.0}% ({} of {} files, {} of {} LOC)\n",
+        s.coverage_pct,
+        s.covered_files,
+        s.source_files,
+        commas(s.covered_loc),
+        commas(s.total_loc)
+    ));
+    if let Some(tc) = s.test_coverage_pct {
+        d.push_str(&format!("- **Test coverage:** {tc:.0}%\n"));
+    }
+    d.push_str(&format!(
+        "- **Specs:** {} &nbsp; **orphan files:** {} &nbsp; **overlap:** {} &nbsp; **broken refs:** {}\n",
+        s.specs, s.orphan_files, s.overlap_files, s.phantom_refs
+    ));
+
+    let need: Vec<&&SpecOut> = order.iter().filter(|sp| sp.needs_review).collect();
+    if !need.is_empty() {
+        d.push_str("\n## Needs review\n\n");
+        for sp in &need {
+            let reason = sp.review_reason.as_deref().unwrap_or("review suggested");
+            d.push_str(&format!(
+                "- [[z={}|{}]]: {}\n",
+                zmap[&sp.index], sp.module, reason
+            ));
+        }
+    }
+    d.push_str("\n## Specs by size\n\n");
+    for sp in &order {
+        d.push_str(&format!(
+            "- [[z={}|{}]] ({} files, {:.0}% of code)\n",
+            zmap[&sp.index], sp.module, sp.files, sp.share_pct
+        ));
+    }
+    d.push('\n');
+
+    // ---- one plane per spec ----
+    for sp in &order {
+        let z = zmap[&sp.index];
+        d.push_str(&format!("@plane z={} label=\"{}\"\n", z, sp.module));
+        d.push_str(&format!("# {}\n\n", sp.module));
+        let mut facts = format!("`{}`", sp.status);
+        if !sp.version.is_empty() {
+            facts.push_str(&format!(" &nbsp; v{}", sp.version));
+        }
+        if !sp.owner.is_empty() {
+            facts.push_str(&format!(" &nbsp; owner {}", sp.owner));
+        }
+        d.push_str(&facts);
+        d.push_str("\n\n");
+        if sp.needs_review {
+            let reason = sp.review_reason.as_deref().unwrap_or("review suggested");
+            d.push_str(&format!("> Needs review: {reason}\n\n"));
+        }
+        d.push_str(&format!(
+            "- **Governs:** {} files, {} LOC ({:.0}% of the codebase)\n",
+            sp.files,
+            commas(sp.loc),
+            sp.share_pct
+        ));
+        if let Some(tp) = sp.test_pct {
+            d.push_str(&format!("- **Test coverage:** {tp:.0}%\n"));
+        }
+        if let Some(u) = &sp.updated {
+            d.push_str(&format!("- **Last changed:** {u}"));
+            if let Some(c) = sp.commits {
+                d.push_str(&format!(" ({c} commits)"));
+            }
+            d.push('\n');
+        }
+
+        if sp.companions.is_empty() {
+            d.push_str("- **Companions:** none\n");
+        } else {
+            d.push_str("- **Companions:** ");
+            let parts: Vec<String> = sp
+                .companions
+                .iter()
+                .map(|c| match &c.updated {
+                    Some(u) => format!("{} ({})", c.name, u),
+                    None => c.name.clone(),
+                })
+                .collect();
+            d.push_str(&parts.join(", "));
+            d.push('\n');
+        }
+
+        let files: Vec<&Source> = sources
+            .iter()
+            .filter(|src| src.specs.contains(&sp.index))
+            .collect();
+        if !files.is_empty() {
+            d.push_str("\n## Files\n\n");
+            for src in files.iter().take(24) {
+                d.push_str(&format!("- `{}` ({} LOC)\n", src.rel_path, src.loc));
+            }
+            if files.len() > 24 {
+                d.push_str(&format!("- ... and {} more\n", files.len() - 24));
+            }
+        }
+        d.push_str("\nBack to [[z=0|Overview]].\n\n");
+    }
+    d
 }
 
 // ---------------------------------------------------------------------------

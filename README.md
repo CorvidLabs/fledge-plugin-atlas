@@ -16,8 +16,18 @@ fledge atlas --open          # write, then open in your browser
 fledge atlas --json          # print the full model as JSON (for agents / piping)
 fledge atlas --review        # JSON: specs that likely need review (for agents)
 fledge atlas --spec <MODULE> # JSON: one spec + its doc & companion contents
+fledge atlas --3md           # write a .3md spec deck (open in the 3md viewer)
 fledge atlas -o report.html  # choose the output path
 ```
+
+### 3md spec deck
+
+`fledge atlas --3md` writes a [`.3md`](https://github.com/CorvidLabs/3md) file: a
+stack of planes along a `layer` axis, with an overview plane (z=0) and one plane
+per spec (biggest first), cross-linked with `[[z=N|module]]`. Open it in the 3md
+viewer to scrub through the project spec by spec, its facts, companions, governed
+files, and review status on each plane. Because planes are addressable, it's also
+a clean feed for an agent to page through the whole project.
 
 ## What it shows
 
