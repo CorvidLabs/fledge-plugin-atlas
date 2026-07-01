@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.5] - 2026-07-01
+
+### Other
+
+- Add: integration tests for the engine pipeline (line coverage ~9% -> ~50%) (9909f66)
+
 ## [v0.1.4] - 2026-07-01
 
 ### Other
