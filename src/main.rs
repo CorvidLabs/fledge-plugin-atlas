@@ -474,6 +474,9 @@ struct GitData {
     per_spec: Vec<(i64, usize)>,
     /// Per source file rel path: last commit unix ts.
     file_last: BTreeMap<String, i64>,
+    /// Per day-number (unix ts / 86400): (commits touching a spec doc/companion,
+    /// commits touching code). Powers the contribution calendar.
+    days: BTreeMap<i64, (usize, usize)>,
     now: i64,
     min_ts: i64,
     max_ts: i64,
@@ -482,15 +485,21 @@ struct GitData {
 fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> {
     // A spec's footprint: every path whose change counts as "this spec moved".
     let mut footprint: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    // Sets to classify a commit as a spec update, a code update, or both.
+    let mut spec_doc_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut code_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     for s in sources {
+        code_set.insert(s.rel_path.clone());
         for &i in &s.specs {
             footprint.entry(s.rel_path.clone()).or_default().push(i);
         }
     }
     for (i, spec) in specs.iter().enumerate() {
         footprint.entry(spec.rel_path.clone()).or_default().push(i);
+        spec_doc_set.insert(spec.rel_path.clone());
         for c in &spec.companions {
             footprint.entry(c.clone()).or_default().push(i);
+            spec_doc_set.insert(c.clone());
         }
     }
 
@@ -512,17 +521,32 @@ fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> 
 
     let mut per_spec = vec![(0i64, 0usize); specs.len()];
     let mut file_last: BTreeMap<String, i64> = BTreeMap::new();
+    let mut days: BTreeMap<i64, (usize, usize)> = BTreeMap::new();
     let mut head_ts = 0i64;
     let mut cur_ts = 0i64;
     let mut cur_specs: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut touched_spec = false;
+    let mut touched_code = false;
 
     for line in text.lines() {
         if let Some(ts) = line.strip_prefix("@ATLAS@") {
-            // Close out the commit we were reading: count it once per touched spec.
+            // Close out the commit we were reading.
             for &idx in &cur_specs {
                 per_spec[idx].1 += 1;
             }
+            if (touched_spec || touched_code) && cur_ts > 0 {
+                let day = cur_ts / 86_400;
+                let e = days.entry(day).or_insert((0, 0));
+                if touched_spec {
+                    e.0 += 1;
+                }
+                if touched_code {
+                    e.1 += 1;
+                }
+            }
             cur_specs.clear();
+            touched_spec = false;
+            touched_code = false;
             cur_ts = ts.trim().parse().unwrap_or(0);
             if head_ts == 0 {
                 head_ts = cur_ts;
@@ -531,6 +555,12 @@ fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> 
             let p = normalize(line);
             // Log is newest-first, so the first time we see a path is its latest touch.
             file_last.entry(p.clone()).or_insert(cur_ts);
+            if spec_doc_set.contains(&p) {
+                touched_spec = true;
+            }
+            if code_set.contains(&p) {
+                touched_code = true;
+            }
             if let Some(idxs) = footprint.get(&p) {
                 for &idx in idxs {
                     if per_spec[idx].0 == 0 {
@@ -543,6 +573,16 @@ fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> 
     }
     for &idx in &cur_specs {
         per_spec[idx].1 += 1;
+    }
+    if (touched_spec || touched_code) && cur_ts > 0 {
+        let day = cur_ts / 86_400;
+        let e = days.entry(day).or_insert((0, 0));
+        if touched_spec {
+            e.0 += 1;
+        }
+        if touched_code {
+            e.1 += 1;
+        }
     }
 
     let now = std::time::SystemTime::now()
@@ -557,10 +597,31 @@ fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> 
     Some(GitData {
         per_spec,
         file_last,
+        days,
         now,
         min_ts,
         max_ts,
     })
+}
+
+/// Gregorian (year, month, day) from a unix day-number, via Howard Hinnant's
+/// civil-from-days algorithm. Used to place calendar cells and label months.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Weekday for a unix day-number, Sunday = 0 (epoch day 0 is a Thursday).
+fn weekday(day: i64) -> i64 {
+    ((day + 4) % 7 + 7) % 7
 }
 
 /// A human relative-time string like "3d ago" or "2mo ago".
@@ -589,6 +650,28 @@ fn heat_color(t: f64) -> String {
     let sat = 25.0 + t * 55.0;
     format!("hsl({hue:.0}, {sat:.0}%, 52%)")
 }
+
+/// Calendar cell colour: teal for spec-only days, orange for code-only, purple
+/// when both changed; brighter with more commits. `None` for a quiet day.
+fn cal_color(spec: usize, code: usize) -> Option<String> {
+    let total = spec + code;
+    if total == 0 {
+        return None;
+    }
+    let hue = if spec > 0 && code > 0 {
+        280
+    } else if spec > 0 {
+        174
+    } else {
+        28
+    };
+    let light = 28.0 + (total.min(9) as f64) * 4.2;
+    Some(format!("hsl({hue}, 62%, {light:.0}%)"))
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 // ---------------------------------------------------------------------------
 // Analysis
@@ -679,6 +762,27 @@ struct Model {
     specs: Vec<SpecOut>,
     files: Vec<FileOut>,
     phantoms: Vec<PhantomOut>,
+    /// Daily commit activity split into spec vs code touches, when git history
+    /// is available. Drives the contribution calendar.
+    calendar: Option<Calendar>,
+}
+
+#[derive(Serialize)]
+struct Calendar {
+    /// Unix day-number of "today", the right edge of the calendar.
+    now_day: i64,
+    days: Vec<DayOut>,
+}
+
+#[derive(Serialize)]
+struct DayOut {
+    /// Unix day-number (ts / 86400).
+    day: i64,
+    date: String,
+    /// Commits that day touching a spec doc or companion.
+    spec: usize,
+    /// Commits that day touching code.
+    code: usize,
 }
 
 #[derive(Serialize)]
@@ -925,6 +1029,26 @@ fn build_model(
         v
     };
 
+    let calendar = git.map(|g| {
+        let days = g
+            .days
+            .iter()
+            .map(|(&day, &(spec, code))| {
+                let (y, m, d) = civil_from_days(day);
+                DayOut {
+                    day,
+                    date: format!("{y:04}-{m:02}-{d:02}"),
+                    spec,
+                    code,
+                }
+            })
+            .collect();
+        Calendar {
+            now_day: g.now / 86_400,
+            days,
+        }
+    });
+
     Model {
         project: project.to_string(),
         verdict,
@@ -946,6 +1070,7 @@ fn build_model(
         specs: spec_out,
         files: file_out,
         phantoms,
+        calendar,
     }
 }
 
@@ -1184,6 +1309,61 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str("</section>");
     }
 
+    // ---- Contribution calendar (spec vs code vs both, per day) ----
+    if let Some(cal) = &m.calendar {
+        let lookup: BTreeMap<i64, (usize, usize)> =
+            cal.days.iter().map(|d| (d.day, (d.spec, d.code))).collect();
+        let now_day = cal.now_day;
+        let now_wd = weekday(now_day);
+        let cols: i64 = 53;
+        h.push_str("<section class=\"block\"><h2>Contribution calendar</h2>");
+        h.push_str("<p class=\"hint\">Every day of the last year. Teal = a spec doc changed, orange = code changed, purple = both changed the same day. Brighter means more commits.</p>");
+        h.push_str("<div class=\"calscroll\"><div class=\"calwrap\">");
+        // month labels aligned to week columns
+        h.push_str("<div class=\"calmonths\">");
+        let mut last_month = 0u32;
+        for col in 0..cols {
+            let col_sunday = now_day - now_wd - (cols - 1 - col) * 7;
+            let (_, mo, dom) = civil_from_days(col_sunday);
+            if dom <= 7 && mo != last_month {
+                h.push_str(&format!(
+                    "<span class=\"calmo\">{}</span>",
+                    MONTHS[(mo as usize - 1) % 12]
+                ));
+                last_month = mo;
+            } else {
+                h.push_str("<span></span>");
+            }
+        }
+        h.push_str("</div>");
+        // day cells, column-major (each column is one week, Sun→Sat)
+        h.push_str("<div class=\"calgrid\">");
+        for col in 0..cols {
+            for row in 0..7 {
+                let day = now_day - now_wd - (cols - 1 - col) * 7 + row;
+                if day > now_day {
+                    h.push_str("<span class=\"cell fut\"></span>");
+                    continue;
+                }
+                let (spec, code) = lookup.get(&day).copied().unwrap_or((0, 0));
+                let (y, mo, dom) = civil_from_days(day);
+                let title = format!(
+                    "{y:04}-{mo:02}-{dom:02}: {spec} spec, {code} code commit{}",
+                    if spec + code == 1 { "" } else { "s" }
+                );
+                match cal_color(spec, code) {
+                    Some(c) => h.push_str(&format!(
+                        "<span class=\"cell\" style=\"background:{c}\" title=\"{title}\"></span>"
+                    )),
+                    None => h.push_str(&format!("<span class=\"cell\" title=\"{title}\"></span>")),
+                }
+            }
+        }
+        h.push_str("</div></div></div>");
+        h.push_str("<p class=\"legend callegend\"><span class=\"heatkey\" style=\"background:hsl(174,62%,48%)\"></span>spec &nbsp; <span class=\"heatkey\" style=\"background:hsl(28,62%,48%)\"></span>code &nbsp; <span class=\"heatkey\" style=\"background:hsl(280,62%,52%)\"></span>both &nbsp; <span class=\"heatkey\" style=\"background:var(--surface)\"></span>no commits</p>");
+        h.push_str("</section>");
+    }
+
     // ---- What needs a spec (the action list) ----
     if !orphans.is_empty() {
         h.push_str("<section class=\"block\"><h2>What needs a spec</h2>");
@@ -1212,14 +1392,22 @@ fn render_html(m: &Model) -> Result<String> {
 
     // ---- Explore the spec map (the graph, now a labelled, collapsible section) ----
     h.push_str("<details open class=\"explore\"><summary>Explore the spec map</summary><div class=\"explore-body\">");
-    h.push_str("<p class=\"hint\">Every spec and every source file is a dot; a line means the spec governs that file. Files linked to two specs sit between them — that is the overlap.</p>");
+    h.push_str("<p class=\"hint\">Squares are specs, circles are code files; a line means the spec governs that file. Click a spec to focus just its code. Drag the background to pan, scroll to zoom, drag a node to move it.</p>");
     h.push_str("<div class=\"maplegend\">");
-    h.push_str("<span><span class=\"k spec\"></span>a spec</span>");
-    h.push_str("<span><span class=\"k file\"></span>a code file</span>");
+    h.push_str("<span><span class=\"k spec\"></span>spec (square)</span>");
+    h.push_str("<span><span class=\"k file\"></span>code file (circle)</span>");
     h.push_str("<span><span class=\"k line\"></span>spec governs file</span>");
     h.push_str("<span><span class=\"k gray\"></span>no spec</span>");
-    h.push_str("<span class=\"muted\">drag · hover to trace · scroll to zoom</span>");
     h.push_str("</div>");
+    // toolbar row 1: search + focus + zoom
+    h.push_str("<div class=\"gtools\">");
+    h.push_str("<input id=\"g-search\" type=\"search\" placeholder=\"Search specs and files…\" autocomplete=\"off\">");
+    h.push_str("<span id=\"g-count\" class=\"gcount\"></span>");
+    h.push_str("<button id=\"g-focus\" class=\"gchip\" style=\"display:none\">focus: <span></span> ✕</button>");
+    h.push_str("<span class=\"gspace\"></span>");
+    h.push_str("<button id=\"g-zout\" title=\"Zoom out\">−</button><button id=\"g-zin\" title=\"Zoom in\">+</button><button id=\"g-fit\" title=\"Fit to view\">fit</button>");
+    h.push_str("</div>");
+    // toolbar row 2: filters + color modes
     h.push_str("<div class=\"controls\">");
     h.push_str("<label><input type=\"checkbox\" id=\"t-orphans\"> show files with no spec</label>");
     h.push_str("<label><input type=\"checkbox\" id=\"t-labels\"> file names</label>");
@@ -1231,7 +1419,7 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str("<button data-mode=\"cov\">by test coverage</button>");
     }
     h.push_str("</span>");
-    h.push_str("<button id=\"g-reset\" class=\"reset\">reset layout</button>");
+    h.push_str("<button id=\"g-reset\" class=\"reset\">reset</button>");
     h.push_str("</div>");
     h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"img\" aria-label=\"Spec and code relationship graph\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
     h.push_str("</div></details>");

@@ -39,8 +39,8 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .explore-body{padding:0 20px 20px}
 .maplegend{display:flex;flex-wrap:wrap;gap:18px;font-family:ui-monospace,monospace;font-size:12px;color:var(--muted);margin:6px 0 16px;align-items:center}
 .maplegend .k{display:inline-block;margin-right:7px;vertical-align:middle}
-.maplegend .k.spec{width:13px;height:13px;border-radius:50%;background:var(--accent)}
-.maplegend .k.file{width:7px;height:7px;border-radius:50%;background:#7fb2c9}
+.maplegend .k.spec{width:13px;height:13px;border-radius:2px;background:var(--accent)}
+.maplegend .k.file{width:8px;height:8px;border-radius:50%;background:#7fb2c9}
 .maplegend .k.line{width:18px;border-top:1px solid var(--faint)}
 .maplegend .k.gray{width:11px;height:11px;border-radius:50%;background:#3a424a}
 .maplegend .muted{color:var(--faint)}
@@ -54,19 +54,33 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .controls button.on{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .controls button:hover{color:var(--text)}
 .controls .reset{margin-left:auto}
-.graph{position:relative;border:1px solid var(--line);background:radial-gradient(circle at 50% 40%,#171b1f,#111417);height:640px;overflow:hidden}
-#graph-svg{width:100%;height:100%;display:block;cursor:grab}
+/* graph toolbar */
+.gtools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
+.gtools #g-search{flex:1 1 240px;min-width:180px;max-width:360px;background:var(--bg);border:1px solid var(--line);color:var(--text);font:13px ui-monospace,monospace;padding:7px 11px}
+.gtools #g-search:focus{outline:none;border-color:color-mix(in srgb,var(--accent) 50%,transparent)}
+.gcount{font-family:ui-monospace,monospace;font-size:12px;color:var(--faint)}
+.gchip{font-family:ui-monospace,monospace;font-size:12px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:4px 9px;cursor:pointer;align-items:center;gap:5px}
+.gspace{flex:1}
+.gtools button:not(.gchip){font-family:ui-monospace,monospace;font-size:13px;background:transparent;color:var(--muted);border:1px solid var(--line);width:32px;height:30px;cursor:pointer}
+.gtools button#g-fit{width:auto;padding:0 10px}
+.gtools button:not(.gchip):hover{color:var(--text);border-color:var(--faint)}
+.graph{position:relative;border:1px solid var(--line);background:radial-gradient(circle at 50% 40%,#171b1f,#111417);height:660px;overflow:hidden}
+#graph-svg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
 #graph-svg .link{stroke:var(--line);stroke-width:1}
-#graph-svg .link.hot{stroke-width:1.6}
+#graph-svg .link.hot{stroke:var(--muted);stroke-width:1.8}
 #graph-svg .node{cursor:pointer}
-#graph-svg .node circle{stroke:#0d0f11;stroke-width:1.2}
-#graph-svg .node.spec circle{stroke:#0d0f11;stroke-width:2}
-#graph-svg .node.spec text{font:600 12px ui-monospace,monospace;fill:var(--text)}
-#graph-svg .node.file text{font:10px ui-monospace,monospace;fill:var(--faint)}
-#graph-svg.dim .node{opacity:.16}
-#graph-svg.dim .link{opacity:.06}
-#graph-svg.dim .node.lit{opacity:1}
-#graph-svg.dim .link.hot{opacity:.9}
+#graph-svg .node circle,#graph-svg .node rect{stroke:#0d0f11;stroke-width:1.2}
+#graph-svg .node.spec rect{stroke:#0d0f11;stroke-width:2}
+#graph-svg .node.spec text{font:600 12px ui-monospace,monospace;fill:var(--text);paint-order:stroke;stroke:#0d0f11;stroke-width:3px}
+#graph-svg .node.file text{font:10px ui-monospace,monospace;fill:var(--muted);paint-order:stroke;stroke:#0d0f11;stroke-width:3px}
+#graph-svg.trace .node{opacity:.15}
+#graph-svg.trace .link{opacity:.05}
+#graph-svg.trace .node.lit{opacity:1}
+#graph-svg.trace .link.hot{opacity:.95}
+#graph-svg.searching .node{opacity:.1}
+#graph-svg.searching .link{opacity:.04}
+#graph-svg.searching .node.match{opacity:1}
+#graph-svg.searching .node.match rect,#graph-svg.searching .node.match circle{stroke:var(--accent);stroke-width:2}
 .tip{position:absolute;pointer-events:none;background:#0d0f11;border:1px solid var(--line);padding:7px 10px;font-family:ui-monospace,monospace;font-size:12px;color:var(--text);max-width:320px;opacity:0;transition:opacity .1s;z-index:5;white-space:nowrap}
 .tip b{color:var(--accent)}
 .tip .sub{color:var(--faint);display:block;margin-top:2px;font-size:11px}
@@ -106,6 +120,15 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .heatkey{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:middle}
 .heatkey.hot{background:hsl(18,80%,52%)}
 .heatkey.cold{background:hsl(210,25%,52%)}
+/* contribution calendar */
+.calscroll{overflow-x:auto;padding-bottom:6px}
+.calwrap{display:inline-block;min-width:min-content}
+.calmonths{display:grid;grid-template-columns:repeat(53,13px);column-gap:3px;margin-bottom:5px;height:14px}
+.calmonths span{font-family:ui-monospace,monospace;font-size:10px;color:var(--faint);white-space:nowrap;overflow:visible}
+.calgrid{display:grid;grid-template-rows:repeat(7,13px);grid-auto-flow:column;grid-auto-columns:13px;gap:3px}
+.calgrid .cell{width:13px;height:13px;border-radius:2px;background:#1b2024}
+.calgrid .cell.fut{background:transparent}
+.callegend .heatkey{border:1px solid var(--line)}
 /* lists */
 table.list{border-collapse:collapse;width:100%;font-size:14px}
 .list td{border-bottom:1px solid var(--line);padding:8px 12px;font-family:ui-monospace,monospace}
