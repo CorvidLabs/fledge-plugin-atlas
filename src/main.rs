@@ -135,7 +135,7 @@ fn run() -> Result<()> {
     fs::write(&out, html).with_context(|| format!("writing {}", out.display()))?;
 
     println!(
-        "atlas: {} specs, {} source files, {} LOC, {:.0}% under spec",
+        "atlas: {} specs, {} source files, {} LOC, {:.0}% spec-covered",
         model.stats.specs,
         model.stats.source_files,
         model.stats.total_loc,
@@ -764,7 +764,7 @@ fn render_html(m: &Model) -> Result<String> {
     stat(
         &mut h,
         &format!("{:.0}%", s.coverage_pct),
-        "under spec",
+        "spec-covered",
         true,
     );
     stat(&mut h, &s.specs.to_string(), "specs", false);
@@ -819,7 +819,7 @@ fn render_html(m: &Model) -> Result<String> {
     ));
     h.push_str("</div>");
     h.push_str(&format!(
-        "<p class=\"legend\"><span class=\"dot covered\"></span>{} covered &nbsp;·&nbsp; <span class=\"dot orphan\"></span>{} orphan &nbsp;·&nbsp; {} of {} files under spec</p>",
+        "<p class=\"legend\"><span class=\"dot covered\"></span>{} covered &nbsp;·&nbsp; <span class=\"dot orphan\"></span>{} orphan &nbsp;·&nbsp; {} of {} files spec-covered</p>",
         kloc(s.covered_loc), kloc(s.orphan_loc), s.covered_files, s.source_files
     ));
     h.push_str("</section>");
