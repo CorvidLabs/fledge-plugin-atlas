@@ -48,14 +48,25 @@ fledge atlas -o report.html  # choose the output path
   `target/tarpaulin/lcov.info` is parsed and overlaid. Generate one with e.g.
   `cargo llvm-cov --lcov --output-path lcov.info`.
 
-## `--json` (for agents)
+## Made to be understood by humans *and* agents
 
-`fledge atlas --json` prints the exact model the HTML is drawn from: `project`,
-`stats` (specs, source_files, total_loc, covered_loc, orphan_files,
-overlap_files, phantom_refs, coverage_pct, test_coverage_pct), `specs[]`,
-`files[]` (with their governing `specs`, `orphan`/`overlap` flags and `test_pct`),
-and `phantoms[]`. Nothing is re-derived — an agent reasons over the same numbers
-a human sees.
+The same atlas serves both. A human opens the HTML and reads a plain-English
+verdict at the top; an agent runs `--json` and gets that **same verdict as a
+field**, so it never has to infer the picture from raw numbers.
+
+`fledge atlas --json` prints:
+
+- **`verdict`** — one plain sentence, identical to what the HTML shows a human,
+  e.g. *"69% of merlin's code is covered by a spec. 180 files (51,277 lines)
+  have no spec; the biggest is …"*. An agent can relay it verbatim.
+- **`health`** — `"healthy"` | `"some gaps"` | `"large gaps"` | `"no specs yet"`.
+- **`stats`** — specs, source_files, total_loc, covered_loc, orphan_loc,
+  covered_files, orphan_files, overlap_files, phantom_refs, coverage_pct,
+  test_coverage_pct.
+- **`specs[]`**, **`files[]`** (each with its governing `specs`, `orphan` /
+  `overlap` flags and `test_pct`), and **`phantoms[]`**.
+
+Nothing is re-derived — humans and agents reason over the exact same model.
 
 ## Install
 

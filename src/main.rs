@@ -506,6 +506,12 @@ fn attach_specs(root: &Path, specs: &[Spec], sources: &mut [Source]) -> Coverage
 #[derive(Serialize)]
 struct Model {
     project: String,
+    /// One plain-English sentence summarizing the project's spec health — the
+    /// same thing a human reads at the top of the HTML. Agents can relay it
+    /// verbatim.
+    verdict: String,
+    /// Coarse health: "healthy" | "some gaps" | "large gaps" | "no specs yet".
+    health: &'static str,
     stats: Stats,
     specs: Vec<SpecOut>,
     files: Vec<FileOut>,
@@ -641,19 +647,74 @@ fn build_model(project: &str, specs: &[Spec], sources: &[Source], cov: &Coverage
         })
         .collect::<Vec<_>>();
 
+    let coverage_pct = cov.covered_loc as f64 / total * 100.0;
+    let orphan_loc = cov.total_loc.saturating_sub(cov.covered_loc);
+    let phantom_refs = phantoms.len();
+    let biggest_orphan = sources
+        .iter()
+        .filter(|s| s.specs.is_empty())
+        .max_by_key(|s| s.loc);
+
+    let health = if specs.is_empty() {
+        "no specs yet"
+    } else if coverage_pct >= 80.0 {
+        "healthy"
+    } else if coverage_pct >= 50.0 {
+        "some gaps"
+    } else {
+        "large gaps"
+    };
+
+    // The same sentence a human reads at the top of the HTML, so an agent can
+    // relay the picture without re-deriving it.
+    let verdict = if specs.is_empty() {
+        format!(
+            "{} has no specs yet. All {} source files ({} lines) are undescribed.",
+            project,
+            sources.len(),
+            commas(cov.total_loc)
+        )
+    } else {
+        let mut v = format!("{coverage_pct:.0}% of {project}'s code is covered by a spec.");
+        if cov.orphan_files == 0 {
+            v.push_str(" Every source file is under a spec.");
+        } else if let Some(b) = biggest_orphan {
+            v.push_str(&format!(
+                " {} files ({} lines) have no spec; the biggest is {} ({} lines).",
+                cov.orphan_files,
+                commas(orphan_loc),
+                b.rel_path,
+                commas(b.loc)
+            ));
+        }
+        if phantom_refs > 0 {
+            let (noun, verb) = if phantom_refs == 1 {
+                ("reference", "points")
+            } else {
+                ("references", "point")
+            };
+            v.push_str(&format!(
+                " {phantom_refs} spec {noun} {verb} at a missing file."
+            ));
+        }
+        v
+    };
+
     Model {
         project: project.to_string(),
+        verdict,
+        health,
         stats: Stats {
             specs: specs.len(),
             source_files: sources.len(),
             total_loc: cov.total_loc,
             covered_loc: cov.covered_loc,
-            orphan_loc: cov.total_loc.saturating_sub(cov.covered_loc),
+            orphan_loc,
             covered_files: cov.covered_files,
             orphan_files: cov.orphan_files,
             overlap_files: cov.overlap_files,
-            phantom_refs: phantoms.len(),
-            coverage_pct: cov.covered_loc as f64 / total * 100.0,
+            phantom_refs,
+            coverage_pct,
             test_coverage_pct,
         },
         specs: spec_out,
@@ -746,6 +807,7 @@ fn render_html(m: &Model) -> Result<String> {
     // Embed the exact model the graph draws. Escape `</` so a path can never
     // break out of the <script> block.
     let data_json = serde_json::to_string(m)?.replace("</", "<\\/");
+    let s = &m.stats;
 
     let mut h = String::with_capacity(96 * 1024);
     h.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
@@ -756,46 +818,158 @@ fn render_html(m: &Model) -> Result<String> {
 
     h.push_str("<p class=\"kicker\">Project atlas</p>");
     h.push_str(&format!("<h1>{}</h1>", esc(&m.project)));
-    h.push_str("<p class=\"sub\">Every spec, every source file, and where they overlap.</p>");
 
-    // Stats
-    let s = &m.stats;
-    h.push_str("<section class=\"stats\">");
+    // Orphans, biggest first — used by both the verdict and the action list.
+    let mut orphans: Vec<&FileOut> = m.files.iter().filter(|f| f.orphan).collect();
+    orphans.sort_by_key(|f| std::cmp::Reverse(f.loc));
+
+    // ---- Plain-English verdict ----
+    h.push_str("<section class=\"verdict\">");
+    if m.specs.is_empty() {
+        h.push_str("<p class=\"big\">This project has no specs yet.</p>");
+        h.push_str(&format!(
+            "<p class=\"rest\">All {} source files ({} lines) are undescribed. Add a <code>*.spec.md</code> that lists the files it governs to start mapping the project.</p>",
+            s.source_files, commas(s.total_loc)
+        ));
+    } else {
+        h.push_str(&format!(
+            "<p class=\"big\"><b>{:.0}%</b> of {}'s code is covered by a spec.</p>",
+            s.coverage_pct,
+            esc(&m.project)
+        ));
+        if s.orphan_files == 0 {
+            h.push_str(
+                "<p class=\"rest\">Every source file is under a spec. Nothing is undescribed.</p>",
+            );
+        } else if let Some(big) = orphans.first() {
+            h.push_str(&format!(
+                "<p class=\"rest\">{} files ({} lines) have no spec yet — the biggest is <code>{}</code> ({} lines).</p>",
+                s.orphan_files, commas(s.orphan_loc), esc(&big.path), commas(big.loc)
+            ));
+        }
+    }
+    if s.phantom_refs > 0 {
+        let (noun, verb) = if s.phantom_refs == 1 {
+            ("reference", "points")
+        } else {
+            ("references", "point")
+        };
+        h.push_str(&format!(
+            "<p class=\"rest warn\">{} spec {} {} at a file that is no longer on disk.</p>",
+            s.phantom_refs, noun, verb
+        ));
+    }
+    // Health bar + status chip.
+    let cov_w = s.coverage_pct;
+    h.push_str("<div class=\"cbar big\">");
+    h.push_str(&format!(
+        "<span class=\"seg covered\" style=\"width:{cov_w:.2}%\"></span><span class=\"seg orphan\" style=\"width:{:.2}%\"></span>",
+        100.0 - cov_w
+    ));
+    h.push_str("</div>");
+    let (chip_cls, chip_txt) = health(s);
+    h.push_str(&format!(
+        "<p class=\"legend\"><span class=\"chip {chip_cls}\">{chip_txt}</span> &nbsp; {} of {} files covered · {} lines covered, {} not</p>",
+        s.covered_files, s.source_files, kloc(s.covered_loc), kloc(s.orphan_loc)
+    ));
+    h.push_str("</section>");
+
+    // ---- At a glance: numbers, each with a plain definition ----
+    h.push_str("<section class=\"stats glance\">");
     stat(
         &mut h,
         &format!("{:.0}%", s.coverage_pct),
         "spec-covered",
+        "share of code a spec describes",
         true,
-    );
-    stat(&mut h, &s.specs.to_string(), "specs", false);
-    stat(&mut h, &s.source_files.to_string(), "source files", false);
-    stat(&mut h, &kloc(s.total_loc), "lines of code", false);
-    stat(
-        &mut h,
-        &s.overlap_files.to_string(),
-        "overlapping files",
-        false,
     );
     stat(
         &mut h,
         &s.orphan_files.to_string(),
-        "orphan files",
+        "need a spec",
+        "no spec mentions them",
         s.orphan_files > 0,
     );
+    stat(
+        &mut h,
+        &s.specs.to_string(),
+        "specs",
+        "*.spec.md contracts",
+        false,
+    );
+    stat(
+        &mut h,
+        &s.source_files.to_string(),
+        "source files",
+        "code files scanned",
+        false,
+    );
+    stat(
+        &mut h,
+        &s.overlap_files.to_string(),
+        "shared files",
+        "under 2 or more specs",
+        false,
+    );
     if let Some(tc) = s.test_coverage_pct {
-        stat(&mut h, &format!("{tc:.0}%"), "test coverage", true);
+        stat(
+            &mut h,
+            &format!("{tc:.0}%"),
+            "test coverage",
+            "lines run by tests",
+            true,
+        );
     }
     if s.phantom_refs > 0 {
-        stat(&mut h, &s.phantom_refs.to_string(), "phantom refs", true);
+        stat(
+            &mut h,
+            &s.phantom_refs.to_string(),
+            "broken refs",
+            "spec points at a missing file",
+            true,
+        );
     }
     h.push_str("</section>");
 
-    // Graph
-    h.push_str("<section class=\"block\"><h2>Spec &amp; code graph</h2>");
-    h.push_str("<p class=\"hint\">Large nodes are specs, small nodes are source files, edges mean a spec governs that file. Files pulled between two specs are the overlap. Drag to rearrange, hover to trace, scroll to zoom.</p>");
+    // ---- What needs a spec (the action list) ----
+    if !orphans.is_empty() {
+        h.push_str("<section class=\"block\"><h2>What needs a spec</h2>");
+        h.push_str(&format!(
+            "<p class=\"hint\">These {} source files have no spec describing them, biggest first. Writing a spec that lists them is how you raise the number above.</p>",
+            s.orphan_files
+        ));
+        h.push_str("<table class=\"list\"><tbody>");
+        for f in orphans.iter().take(200) {
+            h.push_str(&format!(
+                "<tr><td>{}</td><td class=\"lang\">{}</td><td class=\"num\">{} lines</td></tr>",
+                esc(&f.path),
+                f.lang,
+                commas(f.loc)
+            ));
+        }
+        h.push_str("</tbody></table>");
+        if orphans.len() > 200 {
+            h.push_str(&format!(
+                "<p class=\"hint\">…and {} more.</p>",
+                orphans.len() - 200
+            ));
+        }
+        h.push_str("</section>");
+    }
+
+    // ---- Explore the spec map (the graph, now a labelled, collapsible section) ----
+    h.push_str("<details open class=\"explore\"><summary>Explore the spec map</summary><div class=\"explore-body\">");
+    h.push_str("<p class=\"hint\">Every spec and every source file is a dot; a line means the spec governs that file. Files linked to two specs sit between them — that is the overlap.</p>");
+    h.push_str("<div class=\"maplegend\">");
+    h.push_str("<span><span class=\"k spec\"></span>a spec</span>");
+    h.push_str("<span><span class=\"k file\"></span>a code file</span>");
+    h.push_str("<span><span class=\"k line\"></span>spec governs file</span>");
+    h.push_str("<span><span class=\"k gray\"></span>no spec</span>");
+    h.push_str("<span class=\"muted\">drag · hover to trace · scroll to zoom</span>");
+    h.push_str("</div>");
     h.push_str("<div class=\"controls\">");
-    h.push_str("<label><input type=\"checkbox\" id=\"t-orphans\"> show orphans</label>");
-    h.push_str("<label><input type=\"checkbox\" id=\"t-labels\"> file labels</label>");
+    h.push_str("<label><input type=\"checkbox\" id=\"t-orphans\"> show files with no spec</label>");
+    h.push_str("<label><input type=\"checkbox\" id=\"t-labels\"> file names</label>");
     h.push_str("<span class=\"cmode\">color: <button data-mode=\"spec\" class=\"on\">by spec</button><button data-mode=\"lang\">by language</button>");
     if m.stats.test_coverage_pct.is_some() {
         h.push_str("<button data-mode=\"cov\">by test coverage</button>");
@@ -804,28 +978,14 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("<button id=\"g-reset\" class=\"reset\">reset layout</button>");
     h.push_str("</div>");
     h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"img\" aria-label=\"Spec and code relationship graph\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
-    h.push_str("</section>");
-
-    // Coverage bar
-    let cov_w = s.coverage_pct;
-    h.push_str("<section class=\"block\"><h2>Coverage by lines of code</h2>");
-    h.push_str("<div class=\"cbar\">");
-    h.push_str(&format!(
-        "<span class=\"seg covered\" style=\"width:{cov_w:.2}%\"></span>"
-    ));
-    h.push_str(&format!(
-        "<span class=\"seg orphan\" style=\"width:{:.2}%\"></span>",
-        100.0 - cov_w
-    ));
-    h.push_str("</div>");
-    h.push_str(&format!(
-        "<p class=\"legend\"><span class=\"dot covered\"></span>{} covered &nbsp;·&nbsp; <span class=\"dot orphan\"></span>{} orphan &nbsp;·&nbsp; {} of {} files spec-covered</p>",
-        kloc(s.covered_loc), kloc(s.orphan_loc), s.covered_files, s.source_files
-    ));
-    h.push_str("</section>");
+    h.push_str("</div></details>");
 
     // Spec cards
-    h.push_str("<section class=\"block\"><h2>Specs</h2><div class=\"cards\">");
+    if !m.specs.is_empty() {
+        h.push_str("<section class=\"block\"><h2>Your specs</h2>");
+        h.push_str("<p class=\"hint\">Each spec, the code it governs, and how much of the project it covers.</p>");
+        h.push_str("<div class=\"cards\">");
+    }
     for spec in &m.specs {
         h.push_str("<div class=\"card\">");
         h.push_str(&format!(
@@ -860,39 +1020,20 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str(&format!("<p class=\"path\">{}</p>", esc(&spec.path)));
         h.push_str("</div>");
     }
-    if m.specs.is_empty() {
-        h.push_str("<p class=\"empty\">No <code>*.spec.md</code> files found in this project.</p>");
-    }
-    h.push_str("</div></section>");
-
-    // Uncovered code
-    let mut orphans: Vec<&FileOut> = m.files.iter().filter(|f| f.orphan).collect();
-    orphans.sort_by_key(|f| std::cmp::Reverse(f.loc));
-    if !orphans.is_empty() {
-        h.push_str("<section class=\"block\"><h2>Uncovered code</h2>");
-        h.push_str("<p class=\"hint\">Source files no spec references, largest first. The domain no contract describes.</p>");
-        h.push_str("<table class=\"list\"><tbody>");
-        for f in orphans.iter().take(200) {
-            h.push_str(&format!(
-                "<tr><td>{}</td><td class=\"lang\">{}</td><td class=\"num\">{} LOC</td></tr>",
-                esc(&f.path),
-                f.lang,
-                f.loc
-            ));
-        }
-        h.push_str("</tbody></table></section>");
+    if !m.specs.is_empty() {
+        h.push_str("</div></section>");
     }
 
-    // Phantom refs
+    // Broken spec references (phantoms)
     if !m.phantoms.is_empty() {
-        h.push_str("<section class=\"block\"><h2>Phantom references</h2>");
+        h.push_str("<section class=\"block\"><h2>Broken spec references</h2>");
         h.push_str(
-            "<p class=\"hint\">Files a spec declares that are missing on disk. A drift signal.</p>",
+            "<p class=\"hint\">A spec lists these files, but they are not on disk — most likely renamed or deleted. Update the spec's <code>files:</code> list to match.</p>",
         );
         h.push_str("<table class=\"list\"><tbody>");
         for p in &m.phantoms {
             h.push_str(&format!(
-                "<tr><td>{}</td><td class=\"lang\">{}</td></tr>",
+                "<tr><td>{}</td><td class=\"lang\">in {}</td></tr>",
                 esc(&p.file),
                 esc(&p.spec)
             ));
@@ -910,13 +1051,41 @@ fn render_html(m: &Model) -> Result<String> {
     Ok(h)
 }
 
-fn stat(h: &mut String, value: &str, label: &str, accent: bool) {
+fn stat(h: &mut String, value: &str, label: &str, define: &str, accent: bool) {
     let cls = if accent { "stat accent" } else { "stat" };
     h.push_str(&format!(
-        "<div class=\"{cls}\"><span class=\"v\">{}</span><span class=\"l\">{}</span></div>",
+        "<div class=\"{cls}\"><span class=\"v\">{}</span><span class=\"l\">{}</span><span class=\"def\">{}</span></div>",
         esc(value),
-        esc(label)
+        esc(label),
+        esc(define)
     ));
+}
+
+/// A plain-language health verdict for the status chip.
+fn health(s: &Stats) -> (&'static str, &'static str) {
+    if s.specs == 0 {
+        ("bad", "no specs yet")
+    } else if s.coverage_pct >= 80.0 {
+        ("ok", "healthy")
+    } else if s.coverage_pct >= 50.0 {
+        ("warn", "some gaps")
+    } else {
+        ("bad", "large gaps")
+    }
+}
+
+/// Group a number with thousands separators for the plain-English copy.
+fn commas(n: usize) -> String {
+    let digits = n.to_string();
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn meta(h: &mut String, key: &str, val: &str) {
