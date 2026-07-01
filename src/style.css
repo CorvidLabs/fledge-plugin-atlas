@@ -31,6 +31,13 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--font-display)}
 .wrap{max-width:1180px;margin:0 auto;padding:56px 32px 80px}
+/* accessibility: visually hidden but exposed to assistive tech */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* skip link: off-screen until focused, then pinned top-left */
+.skip-link{position:absolute;left:-9999px;top:0;z-index:100;background:var(--bg);color:var(--accent);font:12px var(--font-mono);border:1px solid var(--accent);padding:8px 12px}
+.skip-link:focus{left:8px;top:8px}
+/* keep focus visible everywhere: coherent keyboard ring in brand accent */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 code{font-family:var(--font-mono);font-size:.9em;color:var(--accent)}
 .kicker{font-family:var(--font-mono);font-size:14px;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:12px;margin:0 0 14px}
 /* component show/hide bar */
@@ -128,7 +135,7 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 /* graph toolbar */
 .gtools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
 .gtools #g-search{flex:1 1 240px;min-width:180px;max-width:360px;background:var(--bg);border:1px solid var(--line);color:var(--text);font:13px var(--font-mono);padding:7px 11px}
-.gtools #g-search:focus{outline:none;border-color:color-mix(in srgb,var(--accent) 50%,transparent)}
+.gtools #g-search:focus{border-color:color-mix(in srgb,var(--accent) 50%,transparent)}
 .gcount{font-family:var(--font-mono);font-size:12px;color:var(--faint)}
 .gchip{font-family:var(--font-mono);font-size:12px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);padding:4px 9px;cursor:pointer;align-items:center;gap:5px}
 .gspace{flex:1}
@@ -142,6 +149,10 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 #graph-svg .link{stroke:var(--line);stroke-width:1}
 #graph-svg .link.hot{stroke:var(--muted);stroke-width:1.8}
 #graph-svg .node{cursor:pointer}
+/* keyboard focus ring on a node: brand-accent stroke, not the UA box */
+#graph-svg .node:focus{outline:none}
+#graph-svg .node:focus-visible circle{stroke:var(--accent);stroke-width:3px;paint-order:stroke}
+#graph-svg .node:focus-visible{opacity:1}
 #graph-svg .node.file circle{stroke:var(--bg);stroke-width:1}
 #graph-svg .node.file.shared circle{stroke:var(--accent);stroke-width:2}
 #graph-svg .node.spec circle.bubble{fill-opacity:.11;stroke-width:1.6;stroke-opacity:.6}
@@ -260,7 +271,12 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .pet--sick .crow-body,.pet--sick .crow-beak{fill:var(--success)}
 .pet--sick .crow{animation:shudder 2.4s ease-in-out infinite;opacity:.85}
 @keyframes shudder{0%,100%{transform:rotate(0)}25%{transform:rotate(-2deg)}75%{transform:rotate(2deg)}}
-@media (prefers-reduced-motion:reduce){.crow,.crow *{animation:none!important}}
+@media (prefers-reduced-motion:reduce){
+  .crow,.crow *{animation:none!important}
+  /* curtail graph motion: the force layout also skips its animated settle in graph.js */
+  #graph-svg,#graph-svg *,.tip{transition:none!important;animation:none!important}
+  html{scroll-behavior:auto!important}
+}
 /* lists */
 table.list{border-collapse:collapse;width:100%;font-size:14px}
 .list td{border-bottom:1px solid var(--line);padding:8px 12px;font-family:var(--font-mono)}
