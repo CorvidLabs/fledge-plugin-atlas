@@ -85,6 +85,11 @@ struct Cli {
     #[arg(long = "3md")]
     three_md: bool,
 
+    /// Write a `.3md` timeline (one plane per active week of git history, oldest
+    /// first) instead of HTML. Scrub the Z axis to walk the project through time.
+    #[arg(long)]
+    timeline: bool,
+
     /// Open the generated HTML in the default browser when done.
     #[arg(long)]
     open: bool,
@@ -191,6 +196,16 @@ fn run() -> Result<()> {
             model.specs.len() + 1,
             model.specs.len()
         );
+        println!("wrote {}", out.display());
+        return Ok(());
+    }
+    if cli.timeline {
+        let out = cli
+            .out
+            .unwrap_or_else(|| root.join(format!("{project}.timeline.3md")));
+        let (doc, weeks) = render_3md_timeline(&root, &specs, &sources, &model);
+        fs::write(&out, doc).with_context(|| format!("writing {}", out.display()))?;
+        println!("3md timeline: {} planes ({} active weeks)", weeks + 1, weeks);
         println!("wrote {}", out.display());
         return Ok(());
     }
@@ -574,6 +589,359 @@ fn render_3md(_root: &Path, _specs: &[Spec], sources: &[Source], model: &Model) 
         d.push_str("\nBack to [[z=0|Overview]].\n\n");
     }
     d
+}
+
+/// One active week of git history, keyed by ISO (year, week).
+struct WeekBucket {
+    /// Earliest commit timestamp seen in the week, for a friendly date label.
+    first_ts: i64,
+    /// All non-merge commits landed that week.
+    commits: usize,
+    /// Commits that touched a spec doc or companion.
+    spec_commits: usize,
+    /// Commits that touched code.
+    code_commits: usize,
+    /// Spec indices whose footprint changed that week.
+    specs: std::collections::BTreeSet<usize>,
+}
+
+/// Render the project as a `.3md` timeline: an overview plane (z=0) plus one
+/// plane per active week of git history, oldest first (z increases with time).
+/// Each week summarizes its commits, the specs it moved, and running totals, so
+/// scrubbing the Z axis walks the project forward through time. Non-git projects
+/// (or repos with no history) get a single plane saying so.
+fn render_3md_timeline(root: &Path, specs: &[Spec], sources: &[Source], model: &Model) -> (String, usize) {
+    // A spec's footprint: every path whose change counts as "this spec moved",
+    // plus the sets that classify a commit as a spec update, a code update, or
+    // both. Mirrors `load_git`, so the two passes agree on what counts.
+    let mut footprint: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut spec_doc_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut code_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for s in sources {
+        code_set.insert(s.rel_path.clone());
+        for &i in &s.specs {
+            footprint.entry(s.rel_path.clone()).or_default().push(i);
+        }
+    }
+    for (i, spec) in specs.iter().enumerate() {
+        footprint.entry(spec.rel_path.clone()).or_default().push(i);
+        spec_doc_set.insert(spec.rel_path.clone());
+        for c in &spec.companions {
+            footprint.entry(c.clone()).or_default().push(i);
+            spec_doc_set.insert(c.clone());
+        }
+    }
+
+    // ---- header ----
+    let mut d = String::with_capacity(16 * 1024);
+    d.push_str("---\n3md: 1.0\naxis: time\n");
+    d.push_str(&format!("title: {} timeline\n", model.project));
+    d.push_str(&format!("project: {}\n", model.project));
+    d.push_str("generated_by: fledge atlas\n---\n\n");
+
+    // ---- one full git pass, bucketed by ISO week ----
+    let out = Command::new("git")
+        .args([
+            "-C",
+            &root.to_string_lossy(),
+            "log",
+            "--no-merges",
+            "--format=@ATLAS@%ct",
+            "--name-only",
+        ])
+        .output()
+        .ok();
+
+    let mut weeks: BTreeMap<(i64, i64), WeekBucket> = BTreeMap::new();
+    if let Some(out) = out.filter(|o| o.status.success()) {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut cur_ts = 0i64;
+        let mut cur_specs: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        let mut touched_spec = false;
+        let mut touched_code = false;
+        let mut have_commit = false;
+
+        let close = |ts: i64,
+                         specs: &std::collections::BTreeSet<usize>,
+                         ts_spec: bool,
+                         ts_code: bool,
+                         weeks: &mut BTreeMap<(i64, i64), WeekBucket>| {
+            if ts <= 0 {
+                return;
+            }
+            let key = iso_year_week(ts / 86_400);
+            let b = weeks.entry(key).or_insert_with(|| WeekBucket {
+                first_ts: ts,
+                commits: 0,
+                spec_commits: 0,
+                code_commits: 0,
+                specs: std::collections::BTreeSet::new(),
+            });
+            b.first_ts = b.first_ts.min(ts);
+            b.commits += 1;
+            if ts_spec {
+                b.spec_commits += 1;
+            }
+            if ts_code {
+                b.code_commits += 1;
+            }
+            for &i in specs {
+                b.specs.insert(i);
+            }
+        };
+
+        for line in text.lines() {
+            if let Some(ts) = line.strip_prefix("@ATLAS@") {
+                if have_commit {
+                    close(cur_ts, &cur_specs, touched_spec, touched_code, &mut weeks);
+                }
+                cur_specs.clear();
+                touched_spec = false;
+                touched_code = false;
+                cur_ts = ts.trim().parse().unwrap_or(0);
+                have_commit = true;
+            } else if !line.is_empty() {
+                let p = normalize(line);
+                if spec_doc_set.contains(&p) {
+                    touched_spec = true;
+                }
+                if code_set.contains(&p) {
+                    touched_code = true;
+                }
+                if let Some(idxs) = footprint.get(&p) {
+                    for &idx in idxs {
+                        cur_specs.insert(idx);
+                    }
+                }
+            }
+        }
+        if have_commit {
+            close(cur_ts, &cur_specs, touched_spec, touched_code, &mut weeks);
+        }
+    }
+
+    // ---- non-git / empty repo: a single honest plane ----
+    if weeks.is_empty() {
+        d.push_str("No git history was found for this project, so there is no timeline to walk. Initialize a repo and make some commits, then re-run `fledge atlas --timeline`.\n\n");
+        d.push_str("@plane z=0 label=\"No history\"\n");
+        d.push_str(&format!("# {} timeline\n\n", model.project));
+        d.push_str("This project has no git history (or is not a git repository), so there are no weekly planes to show.\n");
+        return (d, 0);
+    }
+
+    // Chronological order is exactly BTreeMap key order: ISO year then week.
+    let ordered: Vec<((i64, i64), &WeekBucket)> = weeks.iter().map(|(k, v)| (*k, v)).collect();
+    let plane_count = ordered.len();
+    let total_commits: usize = ordered.iter().map(|(_, b)| b.commits).sum();
+    let all_specs: std::collections::BTreeSet<usize> =
+        ordered.iter().flat_map(|(_, b)| b.specs.iter().copied()).collect();
+    let (first_key, first_b) = ordered[0];
+    let (last_key, last_b) = ordered[plane_count - 1];
+    let label_of = |key: (i64, i64)| format!("{:04}-W{:02}", key.0, key.1);
+
+    d.push_str(&format!(
+        "A week-by-week walk of {}'s git history: {} active week{} from {} to {}, {} commit{} touching {} of {} spec{}. Scrub the Z axis to move forward in time; idle weeks are skipped and noted.\n\n",
+        model.project,
+        plane_count,
+        if plane_count == 1 { "" } else { "s" },
+        label_of(first_key),
+        label_of(last_key),
+        commas(total_commits),
+        if total_commits == 1 { "" } else { "s" },
+        all_specs.len(),
+        specs.len(),
+        if specs.len() == 1 { "" } else { "s" },
+    ));
+
+    // ---- z=0 overview ----
+    d.push_str("@plane z=0 label=\"Overview\"\n");
+    d.push_str(&format!("# {} timeline\n\n", model.project));
+    d.push_str("- **Axis:** time (one plane per active week, oldest first)\n");
+    d.push_str(&format!(
+        "- **Span:** {} to {} ({} active week{})\n",
+        date_label(first_b.first_ts),
+        date_label(last_b.first_ts),
+        plane_count,
+        if plane_count == 1 { "" } else { "s" }
+    ));
+    d.push_str(&format!("- **Commits:** {} total\n", commas(total_commits)));
+    d.push_str(&format!(
+        "- **Specs touched:** {} of {}\n",
+        all_specs.len(),
+        specs.len()
+    ));
+    d.push_str("\n## Weeks\n\n");
+    for (i, (key, b)) in ordered.iter().enumerate() {
+        d.push_str(&format!(
+            "- [[z={}|{}]]: {} commit{} ({} spec, {} code), {} spec{} touched\n",
+            i + 1,
+            label_of(*key),
+            b.commits,
+            if b.commits == 1 { "" } else { "s" },
+            b.spec_commits,
+            b.code_commits,
+            b.specs.len(),
+            if b.specs.len() == 1 { "" } else { "s" }
+        ));
+    }
+    d.push('\n');
+
+    // ---- one plane per active week ----
+    let mut running_commits = 0usize;
+    let mut seen_specs: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    let mut prev_key: Option<(i64, i64)> = None;
+    for (i, (key, b)) in ordered.iter().enumerate() {
+        let z = i + 1;
+        let label = label_of(*key);
+        running_commits += b.commits;
+        for &idx in &b.specs {
+            seen_specs.insert(idx);
+        }
+        // Skipped-week gap since the previous active week.
+        let gap = match prev_key {
+            Some(pk) => (iso_week_ordinal(*key) - iso_week_ordinal(pk) - 1).max(0),
+            None => 0,
+        };
+
+        d.push_str(&format!("@plane z={} label=\"{}\"\n", z, label));
+        d.push_str(&format!("# {} · {}\n\n", label, week_range(b.first_ts)));
+
+        d.push_str(&format!(
+            "- **Commits this week:** {} ({} spec-doc, {} code)\n",
+            b.commits, b.spec_commits, b.code_commits
+        ));
+        // Which specs changed this week.
+        if b.specs.is_empty() {
+            d.push_str("- **Specs changed:** none\n");
+        } else {
+            let names: Vec<String> = b
+                .specs
+                .iter()
+                .map(|&idx| specs.get(idx).map(|s| s.module.clone()).unwrap_or_default())
+                .filter(|n| !n.is_empty())
+                .collect();
+            d.push_str(&format!(
+                "- **Specs changed:** {} ({})\n",
+                b.specs.len(),
+                names.join(", ")
+            ));
+        }
+        d.push_str(&format!(
+            "- **Cumulative:** {} commit{} to date, {} of {} spec{} touched\n",
+            commas(running_commits),
+            if running_commits == 1 { "" } else { "s" },
+            seen_specs.len(),
+            specs.len(),
+            if specs.len() == 1 { "" } else { "s" }
+        ));
+
+        // One-line prose summary.
+        let mut prose = format!(
+            "{} commit{} landed in {}",
+            b.commits,
+            if b.commits == 1 { "" } else { "s" },
+            label
+        );
+        if b.spec_commits > 0 && b.code_commits > 0 {
+            prose.push_str(&format!(
+                ", splitting {} spec and {} code",
+                b.spec_commits, b.code_commits
+            ));
+        } else if b.spec_commits > 0 {
+            prose.push_str(", all touching specs");
+        } else if b.code_commits > 0 {
+            prose.push_str(", all in code");
+        }
+        prose.push('.');
+        if !b.specs.is_empty() {
+            prose.push_str(&format!(
+                " {} spec{} moved.",
+                b.specs.len(),
+                if b.specs.len() == 1 { "" } else { "s" }
+            ));
+        }
+        if gap > 0 {
+            prose.push_str(&format!(
+                " {} idle week{} preceded it.",
+                gap,
+                if gap == 1 { "" } else { "s" }
+            ));
+        }
+        d.push_str(&format!("\n{prose}\n\n"));
+
+        // Cross-link prev / next for a scrubbable prev/next feel.
+        let mut nav: Vec<String> = Vec::new();
+        if z > 1 {
+            nav.push(format!("Prev [[z={}|{}]]", z - 1, label_of(ordered[i - 1].0)));
+        } else {
+            nav.push("[[z=0|Overview]]".to_string());
+        }
+        if i + 1 < plane_count {
+            nav.push(format!("Next [[z={}|{}]]", z + 1, label_of(ordered[i + 1].0)));
+        }
+        d.push_str(&nav.join(" · "));
+        d.push('\n');
+        if z != plane_count {
+            d.push('\n');
+        }
+        prev_key = Some(*key);
+    }
+
+    (d, plane_count)
+}
+
+/// ISO 8601 (year, week) for a unix day-number. Weeks start Monday; week 1 is
+/// the week containing the year's first Thursday.
+fn iso_year_week(day: i64) -> (i64, i64) {
+    // ISO weekday: Monday = 1 ... Sunday = 7.
+    let wd = weekday(day);
+    let iso_wd = if wd == 0 { 7 } else { wd };
+    // The Thursday of this week fixes both the ISO year and the week number.
+    let thursday = day + (4 - iso_wd);
+    let (ty, _, _) = civil_from_days(thursday);
+    let jan1 = days_from_civil(ty, 1, 1);
+    let week = (thursday - jan1) / 7 + 1;
+    (ty, week)
+}
+
+/// A monotonic week ordinal (roughly weeks since the epoch) for measuring the
+/// gap between two ISO weeks without calendar edge cases.
+fn iso_week_ordinal(key: (i64, i64)) -> i64 {
+    // Reconstruct the Thursday of that ISO week and divide by 7. Thursdays are
+    // exactly 7 days apart and never straddle an ISO-year boundary.
+    let jan1 = days_from_civil(key.0, 1, 1);
+    let thursday = jan1 + (key.1 - 1) * 7;
+    thursday.div_euclid(7)
+}
+
+/// Unix day-number for a Gregorian date, via Howard Hinnant's days-from-civil.
+/// Inverse of `civil_from_days`.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m as i64 - 3 } else { m as i64 + 9 };
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// A short `YYYY-MM-DD` label for a unix timestamp.
+fn date_label(ts: i64) -> String {
+    let (y, m, d) = civil_from_days(ts / 86_400);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The Monday..Sunday date range containing a unix timestamp, as prose.
+fn week_range(ts: i64) -> String {
+    let day = ts / 86_400;
+    let wd = weekday(day);
+    let iso_wd = if wd == 0 { 7 } else { wd };
+    let monday = day - (iso_wd - 1);
+    let sunday = monday + 6;
+    let (my, mm, md) = civil_from_days(monday);
+    let (sy, sm, sd) = civil_from_days(sunday);
+    format!("{my:04}-{mm:02}-{md:02} to {sy:04}-{sm:02}-{sd:02}")
 }
 
 // ---------------------------------------------------------------------------
