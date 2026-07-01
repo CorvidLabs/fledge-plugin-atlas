@@ -4756,3 +4756,153 @@ const DELIGHT_JS: &str = include_str!("delight.js");
 const COMPONENTS_JS: &str = include_str!("components.js");
 const THREEMD_JS: &str = include_str!("threemd.js");
 const SINCE_JS: &str = include_str!("since.js");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// A unique scratch directory per test, no external dependency.
+    fn tmp() -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let mut p = std::env::temp_dir();
+        p.push(format!("atlas-test-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn stats(specs: usize, files: usize, loc: usize, cov: f64) -> Stats {
+        Stats {
+            specs,
+            source_files: files,
+            total_loc: loc,
+            covered_loc: 0,
+            orphan_loc: 0,
+            covered_files: 0,
+            orphan_files: 0,
+            overlap_files: 0,
+            phantom_refs: 0,
+            coverage_pct: cov,
+            test_coverage_pct: None,
+            has_history: false,
+        }
+    }
+
+    #[test]
+    fn frontmatter_splits_yaml_from_body() {
+        let (front, body) = split_frontmatter("---\nmodule: x\nfiles:\n  - a.rs\n---\n# Body\ntext");
+        assert!(front.contains("module: x"));
+        assert!(body.contains("# Body"));
+    }
+
+    #[test]
+    fn frontmatter_absent_returns_whole_body() {
+        let (front, body) = split_frontmatter("no yaml here");
+        assert_eq!(front, "");
+        assert_eq!(body, "no yaml here");
+    }
+
+    #[test]
+    fn civil_dates_round_trip() {
+        // 2000-01-01 is unix day 10957.
+        assert_eq!(days_from_civil(2000, 1, 1), 10957);
+        assert_eq!(civil_from_days(10957), (2000, 1, 1));
+        for day in [-1000i64, 0, 1, 12_345, 20_000] {
+            let (y, m, d) = civil_from_days(day);
+            assert_eq!(days_from_civil(y, m, d), day, "round-trip day {day}");
+        }
+    }
+
+    #[test]
+    fn epoch_day_zero_is_thursday() {
+        // Sunday = 0; 1970-01-01 was a Thursday = 4.
+        assert_eq!(weekday(0), 4);
+    }
+
+    #[test]
+    fn generated_and_minified_files_are_flagged() {
+        assert!(looks_generated("dist/app.min.js", ""));
+        assert!(looks_generated("x.bundle.js", ""));
+        assert!(looks_generated("a/b.rs", "// @generated\nfn x() {}"));
+        assert!(looks_generated("wide.rs", &"x".repeat(6000)));
+        assert!(!looks_generated("src/main.rs", "fn main() {}\n"));
+    }
+
+    #[test]
+    fn language_classification() {
+        assert_eq!(lang_for("rs"), "Rust");
+        assert_eq!(lang_for("tsx"), "TypeScript/JS");
+        assert_eq!(lang_for("swift"), "Swift");
+        assert_eq!(lang_for("xyz"), "other");
+    }
+
+    #[test]
+    fn spec_colours_cycle_and_stay_on_palette() {
+        assert!(spec_color(0).contains("--chart-1"));
+        assert!(spec_color(1).contains("--chart-2"));
+        assert!(spec_color(5).contains("--chart-1")); // wraps after five
+        for i in 0..40 {
+            let c = spec_color(i);
+            assert!(c.contains("--chart-"), "uses a chart token");
+            assert!(!c.to_lowercase().contains("purple"), "house rule: no purple");
+        }
+    }
+
+    #[test]
+    fn rel_strips_root_and_normalize_trims() {
+        let root = PathBuf::from("/a/b");
+        assert_eq!(rel(&root, &PathBuf::from("/a/b/src/main.rs")), "src/main.rs");
+        assert_eq!(normalize("./src/x.rs"), "src/x.rs");
+    }
+
+    #[test]
+    fn health_tracks_coverage_bands() {
+        assert_eq!(health(&stats(0, 0, 0, 0.0)).1, "no specs yet");
+        assert_eq!(health(&stats(3, 0, 0, 0.0)).1, "no code yet");
+        assert_eq!(health(&stats(3, 5, 100, 90.0)).1, "healthy");
+        assert_eq!(health(&stats(3, 5, 100, 60.0)).1, "some gaps");
+        assert_eq!(health(&stats(3, 5, 100, 30.0)).1, "large gaps");
+    }
+
+    #[test]
+    fn commas_group_thousands() {
+        assert_eq!(commas(1_234_567), "1,234,567");
+        assert_eq!(commas(42), "42");
+    }
+
+    #[test]
+    fn parse_spec_reads_frontmatter_files_and_deps() {
+        let dir = tmp();
+        let path = dir.join("engine.spec.md");
+        fs::write(
+            &path,
+            "---\nmodule: engine\nstatus: active\nversion: 0.1.0\nowner: me\nfiles:\n  - src/main.rs\ndepends_on:\n  - core\n---\n# engine\n## Purpose\nhi\n",
+        )
+        .unwrap();
+        let spec = parse_spec(&dir, &path).expect("spec parses");
+        assert_eq!(spec.module, "engine");
+        assert_eq!(spec.status, "active");
+        assert_eq!(spec.files, vec!["src/main.rs".to_string()]);
+        assert_eq!(spec.depends_on, vec!["core".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_specs_finds_only_spec_files() {
+        let dir = tmp();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::write(
+            dir.join("specs/a.spec.md"),
+            "---\nmodule: a\nfiles:\n  - x.rs\n---\nbody",
+        )
+        .unwrap();
+        fs::write(dir.join("README.md"), "not a spec").unwrap();
+        let specs = load_specs(&dir).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].module, "a");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

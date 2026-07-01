@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    name: Build, test, and govern
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Test
+        run: cargo test --release --locked
+
+      # The atlas guards its own specs: fail the build if this repo ever drops
+      # below full spec coverage, or grows an orphan or a phantom reference.
+      - name: Governance gate (atlas on itself)
+        run: |
+          ./target/release/fledge-atlas . --json > atlas.json
+          node -e '
+            const m = JSON.parse(require("fs").readFileSync("atlas.json", "utf8"));
+            const s = m.stats;
+            const fails = [];
+            if (s.coverage_pct < 100) fails.push(`spec coverage ${s.coverage_pct.toFixed(1)}% is below 100%`);
+            if (s.orphan_files > 0)   fails.push(`${s.orphan_files} orphan file(s) with no spec`);
+            if (s.phantom_refs > 0)   fails.push(`${s.phantom_refs} phantom reference(s)`);
+            if (fails.length) { console.error("Governance gate failed:\n  - " + fails.join("\n  - ")); process.exit(1); }
+            console.log(`Governance OK: ${s.specs} specs, 100% of code spec-covered, 0 orphans, 0 phantoms.`);
+          '
+
+  coverage:
+    name: Test coverage (lcov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate lcov
+        run: cargo llvm-cov --release --locked --lcov --output-path lcov.info
+      - name: Upload lcov
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info

@@ -12,3 +12,7 @@ Thumbs.db
 # generated self-atlas demo (screenshots in docs/ are committed instead)
 atlas.html
 *.atlas.html
+
+# coverage + CI scratch
+lcov.info
+atlas.json

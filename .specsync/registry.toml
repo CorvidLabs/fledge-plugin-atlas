@@ -1,0 +1,13 @@
+[registry]
+name = "fledge-plugin-atlas"
+
+[specs]
+sample-demo = "specs/sample-demo/sample-demo.spec.md"
+engine = "specs/engine/engine.spec.md"
+style = "specs/style/style.spec.md"
+graph = "specs/graph/graph.spec.md"
+delight = "specs/delight/delight.spec.md"
+depgraph = "specs/depgraph/depgraph.spec.md"
+threemd = "specs/threemd/threemd.spec.md"
+since = "specs/since/since.spec.md"
+components = "specs/components/components.spec.md"

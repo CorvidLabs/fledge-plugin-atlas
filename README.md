@@ -247,6 +247,24 @@ the same day). The same data is in `--json` under `calendar`.
 
 Nothing is re-derived: humans and agents reason over the exact same model.
 
+## Development
+
+This repo is spec-governed with [spec-sync](https://github.com/CorvidLabs/merlin):
+every source file is described by a spec in [`specs/`](specs/), and CI keeps it
+that way.
+
+```
+cargo test                 # unit tests for the engine (parsing, coverage math, dates, ...)
+fledge spec check          # spec-sync: frontmatter, required sections, drift vs code
+fledge atlas . --json      # the atlas grading itself (100% covered, 0 orphans, 0 phantoms)
+```
+
+CI (`.github/workflows/ci.yml`) builds, runs the tests, and then runs the atlas
+on itself as a **governance gate**: the build fails if spec coverage ever drops
+below 100%, or the repo grows an orphan file or a phantom reference. A separate
+job generates an `lcov` report with `cargo llvm-cov` so the atlas's own
+test-coverage overlay can light up.
+
 ## Install
 
 ```
