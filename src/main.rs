@@ -230,7 +230,7 @@ fn run() -> Result<()> {
     let out = cli
         .out
         .unwrap_or_else(|| cwd.join(format!("{project}.atlas.html")));
-    let html = render_html(&model)?;
+    let html = render_html(&root, &model)?;
     fs::write(&out, html).with_context(|| format!("writing {}", out.display()))?;
 
     println!(
@@ -2896,7 +2896,232 @@ fn run_augur_json(root: &Path, timeout: Duration) -> Option<Vec<u8>> {
     }
 }
 
-fn render_html(m: &Model) -> Result<String> {
+/// Read a spec's markdown body from disk, strip its YAML frontmatter, and render
+/// the remaining prose (Purpose / Requirements / Invariants, etc.) to safe inline
+/// HTML. Returns None when the file is unreadable or has no visible prose. This
+/// runs server-side so the rendered bodies never enter the embedded model JSON.
+fn spec_prose(root: &Path, rel_path: &str) -> Option<String> {
+    let text = fs::read_to_string(root.join(rel_path)).ok()?;
+    let (_front, body) = split_frontmatter(&text);
+    let html = markdown_to_html(body);
+    if html.trim().is_empty() {
+        None
+    } else {
+        Some(html)
+    }
+}
+
+/// A deliberately small markdown-to-HTML renderer for untrusted repo prose. It
+/// handles headings, bold, inline code, fenced code, lists, links, and
+/// paragraphs, and HTML-escapes every scrap of text (no raw passthrough).
+fn markdown_to_html(body: &str) -> String {
+    let mut out = String::new();
+    let mut para: Vec<String> = Vec::new();
+    let mut list: Option<&'static str> = None;
+    let mut in_code = false;
+    let mut code_buf = String::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim_end();
+        let stripped = trimmed.trim_start();
+
+        if stripped.starts_with("```") || stripped.starts_with("~~~") {
+            if in_code {
+                out.push_str("<pre class=\"cb\"><code>");
+                out.push_str(&esc(&code_buf));
+                out.push_str("</code></pre>");
+                code_buf.clear();
+                in_code = false;
+            } else {
+                flush_para(&mut out, &mut para);
+                flush_list(&mut out, &mut list);
+                in_code = true;
+            }
+            continue;
+        }
+        if in_code {
+            code_buf.push_str(line);
+            code_buf.push('\n');
+            continue;
+        }
+
+        if stripped.is_empty() {
+            flush_para(&mut out, &mut para);
+            flush_list(&mut out, &mut list);
+            continue;
+        }
+
+        // Headings: subordinate to the card's <h3>, so `#` maps to <h4>..<h6>.
+        let hashes = stripped.chars().take_while(|&c| c == '#').count();
+        if (1..=6).contains(&hashes) && stripped[hashes..].starts_with(' ') {
+            flush_para(&mut out, &mut para);
+            flush_list(&mut out, &mut list);
+            let level = (hashes + 3).min(6);
+            let content = stripped[hashes..].trim();
+            out.push_str(&format!("<h{level}>{}</h{level}>", render_inline(content)));
+            continue;
+        }
+
+        // Unordered list item.
+        if let Some(item) = stripped
+            .strip_prefix("- ")
+            .or_else(|| stripped.strip_prefix("* "))
+            .or_else(|| stripped.strip_prefix("+ "))
+        {
+            flush_para(&mut out, &mut para);
+            if list != Some("ul") {
+                flush_list(&mut out, &mut list);
+                out.push_str("<ul>");
+                list = Some("ul");
+            }
+            out.push_str(&format!("<li>{}</li>", render_inline(item.trim())));
+            continue;
+        }
+
+        // Ordered list item: leading digits then ". ".
+        let digits = stripped.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && stripped[digits..].starts_with(". ") {
+            flush_para(&mut out, &mut para);
+            if list != Some("ol") {
+                flush_list(&mut out, &mut list);
+                out.push_str("<ol>");
+                list = Some("ol");
+            }
+            let item = stripped[digits + 2..].trim();
+            out.push_str(&format!("<li>{}</li>", render_inline(item)));
+            continue;
+        }
+
+        // Otherwise a paragraph line; soft-wrapped lines join with a space.
+        flush_list(&mut out, &mut list);
+        para.push(stripped.to_string());
+    }
+
+    if in_code {
+        out.push_str("<pre class=\"cb\"><code>");
+        out.push_str(&esc(&code_buf));
+        out.push_str("</code></pre>");
+    }
+    flush_para(&mut out, &mut para);
+    flush_list(&mut out, &mut list);
+    out
+}
+
+fn flush_para(out: &mut String, para: &mut Vec<String>) {
+    if !para.is_empty() {
+        out.push_str("<p>");
+        out.push_str(&render_inline(&para.join(" ")));
+        out.push_str("</p>");
+        para.clear();
+    }
+}
+
+fn flush_list(out: &mut String, list: &mut Option<&'static str>) {
+    if let Some(tag) = list.take() {
+        out.push_str(&format!("</{tag}>"));
+    }
+}
+
+/// Render inline markdown (inline code, bold, links) on a single text run,
+/// HTML-escaping every character that is not part of the markup we emit.
+fn render_inline(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+
+        // Inline code: `...` wins over other markup, its body is escaped verbatim.
+        if c == '`' {
+            if let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == '`') {
+                let code: String = chars[i + 1..close].iter().collect();
+                out.push_str("<code>");
+                out.push_str(&esc(&code));
+                out.push_str("</code>");
+                i = close + 1;
+                continue;
+            }
+        }
+
+        // Bold: **...**
+        if c == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            if let Some(close) = (i + 2..chars.len().saturating_sub(1))
+                .find(|&j| chars[j] == '*' && chars[j + 1] == '*')
+            {
+                let inner: String = chars[i + 2..close].iter().collect();
+                out.push_str("<strong>");
+                out.push_str(&render_inline(&inner));
+                out.push_str("</strong>");
+                i = close + 2;
+                continue;
+            }
+        }
+
+        // Link: [label](url)
+        if c == '[' {
+            if let Some(rb) = (i + 1..chars.len()).find(|&j| chars[j] == ']') {
+                if rb + 1 < chars.len() && chars[rb + 1] == '(' {
+                    if let Some(rp) = (rb + 2..chars.len()).find(|&j| chars[j] == ')') {
+                        let label: String = chars[i + 1..rb].iter().collect();
+                        let url: String = chars[rb + 2..rp].iter().collect();
+                        let label_html = render_inline(&label);
+                        if is_safe_url(&url) {
+                            out.push_str(&format!(
+                                "<a href=\"{}\">{}</a>",
+                                esc(url.trim()),
+                                label_html
+                            ));
+                        } else {
+                            out.push_str(&label_html);
+                        }
+                        i = rp + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        out.push_str(&esc_char(c));
+        i += 1;
+    }
+    out
+}
+
+fn esc_char(c: char) -> String {
+    match c {
+        '&' => "&amp;".to_string(),
+        '<' => "&lt;".to_string(),
+        '>' => "&gt;".to_string(),
+        '"' => "&quot;".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Allow only relative links and http/https/mailto schemes; reject anything with
+/// a foreign scheme (javascript:, data:, vbscript:, …) so untrusted prose cannot
+/// smuggle an executable URL past escaping.
+fn is_safe_url(url: &str) -> bool {
+    let u = url.trim();
+    if u.is_empty() {
+        return false;
+    }
+    // A scheme is text before the first ':' that precedes any '/', '?', or '#'.
+    let scheme_end = u.find(':');
+    let path_start = u.find(['/', '?', '#']);
+    match (scheme_end, path_start) {
+        (Some(colon), Some(slash)) if colon < slash => {
+            let scheme = u[..colon].to_ascii_lowercase();
+            matches!(scheme.as_str(), "http" | "https" | "mailto")
+        }
+        (Some(colon), None) => {
+            let scheme = u[..colon].to_ascii_lowercase();
+            matches!(scheme.as_str(), "http" | "https" | "mailto")
+        }
+        _ => true, // no scheme -> relative link or fragment
+    }
+}
+
+fn render_html(root: &Path, m: &Model) -> Result<String> {
     // Embed the exact model the graph draws. Escape `</` so a path can never
     // break out of the <script> block.
     let data_json = serde_json::to_string(m)?.replace("</", "<\\/");
@@ -3408,6 +3633,15 @@ fn render_html(m: &Model) -> Result<String> {
             h.push_str("</div>");
         }
         h.push_str(&format!("<p class=\"path\">{}</p>", esc(&spec.path)));
+        // Inline spec prose, rendered server-side and lazily revealed so a large
+        // body never bloats the embedded model JSON or the first paint.
+        if let Some(prose) = spec_prose(root, &spec.path) {
+            h.push_str(
+                "<details class=\"specprose\"><summary>read spec</summary><div class=\"prose\">",
+            );
+            h.push_str(&prose);
+            h.push_str("</div></details>");
+        }
         h.push_str("</div>");
     }
     if !m.specs.is_empty() {
