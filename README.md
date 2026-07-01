@@ -17,6 +17,7 @@ fledge atlas --json          # print the full model as JSON (for agents / piping
 fledge atlas --review        # JSON: specs that likely need review (for agents)
 fledge atlas --spec <MODULE> # JSON: one spec + its doc & companion contents
 fledge atlas --3md           # write a .3md spec deck (open in the 3md viewer)
+fledge atlas --timeline      # write a .3md timeline, one plane per week of git history
 fledge atlas -o report.html  # choose the output path
 ```
 
@@ -28,6 +29,18 @@ per spec (biggest first), cross-linked with `[[z=N|module]]`. Open it in the 3md
 viewer to scrub through the project spec by spec, its facts, companions, governed
 files, and review status on each plane. Because planes are addressable, it's also
 a clean feed for an agent to page through the whole project.
+
+### 3md timeline
+
+`fledge atlas --timeline` writes a [`.3md`](https://github.com/CorvidLabs/3md)
+file along a `time` axis, mined from `git log`: an overview plane (z=0) plus one
+plane per **active week** of history, oldest first (z increases with time). Each
+weekly plane reports that week's commits (with a spec-doc vs code split), which
+specs changed, running cumulative totals, and a one-line prose summary; planes
+are cross-linked prev/next with `[[z=N|label]]`, and idle weeks are skipped and
+noted so the deck stays dense. Defaults to `<project>.timeline.3md` (override
+with `-o`). A non-git project gets a single plane saying there is no history.
+Scrub the Z axis to walk the project forward through time.
 
 ## What it shows
 
