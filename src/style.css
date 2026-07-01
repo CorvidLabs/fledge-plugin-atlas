@@ -120,7 +120,7 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .maplegend .k.spec{width:15px;height:15px;border-radius:50%;background:color-mix(in srgb,var(--accent) 16%,transparent);border:1.5px solid var(--accent)}
 .maplegend .k.file{width:8px;height:8px;border-radius:50%;background:var(--chart-1)}
 .maplegend .k.shared{width:8px;height:8px;border-radius:50%;background:var(--chart-3)}
-.maplegend .k.gray{width:8px;height:8px;border-radius:50%;background:color-mix(in srgb,var(--muted) 40%,var(--bg))}
+.maplegend .k.gray{width:8px;height:8px;border-radius:50%;background:color-mix(in srgb,var(--muted) 55%,var(--bg))}
 .maplegend .muted{color:var(--faint)}
 .hint{color:var(--muted);font-size:13px;margin:0 0 16px;max-width:760px}
 /* graph */

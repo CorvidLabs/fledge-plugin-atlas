@@ -2649,6 +2649,9 @@ fn build_model(
     }
     let mut languages: Vec<LangOut> = lang_map
         .into_iter()
+        // Drop languages that contribute no lines (e.g. a single empty file); a
+        // "Python 0 LOC" entry is noise, not signal.
+        .filter(|(_, (loc, _))| *loc > 0)
         .map(|(lang, (loc, files))| LangOut {
             lang,
             loc,

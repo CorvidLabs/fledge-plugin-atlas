@@ -24,7 +24,7 @@
     LANGC[l] = `color-mix(in srgb, var(${CHART[i%CHART.length]}) ${mix}%, var(--bg))`;
   });
   // Governance-state palette, shared with the treemap and sunburst.
-  const NOSPEC   = 'color-mix(in srgb, var(--muted) 40%, var(--bg))'; // no spec
+  const NOSPEC   = 'color-mix(in srgb, var(--muted) 55%, var(--bg))'; // no spec
   const GOVERNED = 'var(--chart-1)';   // has a spec
   const SHARED   = 'var(--chart-3)';   // shared by 2+ specs
   const covColor = pct => pct==null ? NOSPEC : `color-mix(in srgb, var(--chart-4) ${Math.round(pct)}%, var(--bad))`; // 0 clay -> 100 green

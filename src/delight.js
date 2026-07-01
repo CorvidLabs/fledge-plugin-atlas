@@ -14,7 +14,7 @@
   const hasCov = stats.test_coverage_pct != null;
   // Governance-state palette: a handful of colours that always mean the same thing,
   // so they stay legible whether a project has 3 specs or 300. Size = lines of code.
-  const NOSPEC   = 'color-mix(in srgb, var(--muted) 40%, var(--bg))'; // no spec (the work to do)
+  const NOSPEC   = 'color-mix(in srgb, var(--muted) 55%, var(--bg))'; // no spec (the work to do)
   const GOVERNED = 'var(--chart-1)';   // has a spec
   const SHARED   = 'var(--chart-3)';   // shared by 2+ specs
   const specName = {};
