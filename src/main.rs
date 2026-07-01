@@ -70,6 +70,16 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Print (as JSON) the specs that likely need review — code changed after
+    /// the spec, spec-sync drift, or broken references. For agents.
+    #[arg(long)]
+    review: bool,
+
+    /// Print (as JSON) one spec's full detail including its doc and companion
+    /// file contents, so an agent can be fed everything about it at once.
+    #[arg(long, value_name = "MODULE")]
+    spec: Option<String>,
+
     /// Open the generated HTML in the default browser when done.
     #[arg(long)]
     open: bool,
@@ -127,6 +137,14 @@ fn run() -> Result<()> {
     let git = load_git(&root, &specs, &sources);
     let model = build_model(&project, &specs, &sources, &coverage, git.as_ref());
 
+    if cli.review {
+        let need: Vec<&SpecOut> = model.specs.iter().filter(|s| s.needs_review).collect();
+        println!("{}", serde_json::to_string_pretty(&need)?);
+        return Ok(());
+    }
+    if let Some(module) = &cli.spec {
+        return emit_spec_detail(&root, &specs, &sources, &model, module);
+    }
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&model)?);
         return Ok(());
@@ -150,6 +168,52 @@ fn run() -> Result<()> {
     if cli.open {
         open_in_browser(&out);
     }
+    Ok(())
+}
+
+/// Emit one spec's full detail as JSON — computed fields plus the actual text
+/// of the spec doc and every companion — so an agent can be handed everything
+/// it needs to reason about (or update) that spec in a single call.
+fn emit_spec_detail(
+    root: &Path,
+    specs: &[Spec],
+    sources: &[Source],
+    model: &Model,
+    module: &str,
+) -> Result<()> {
+    let idx = specs
+        .iter()
+        .position(|s| s.module.eq_ignore_ascii_case(module))
+        .with_context(|| {
+            let names: Vec<&str> = specs.iter().map(|s| s.module.as_str()).collect();
+            format!("no spec named '{module}'. known: {}", names.join(", "))
+        })?;
+    let spec = &specs[idx];
+    let read = |rel: &str| fs::read_to_string(root.join(rel)).ok();
+
+    let companions: Vec<serde_json::Value> = spec
+        .companions
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "path": c,
+                "content": read(c),
+            })
+        })
+        .collect();
+    let files: Vec<serde_json::Value> = sources
+        .iter()
+        .filter(|s| s.specs.contains(&idx))
+        .map(|s| serde_json::json!({ "path": s.rel_path, "loc": s.loc, "lang": s.lang }))
+        .collect();
+
+    let detail = serde_json::json!({
+        "spec": model.specs.get(idx),
+        "doc": { "path": spec.rel_path, "content": read(&spec.rel_path) },
+        "companions": companions,
+        "files": files,
+    });
+    println!("{}", serde_json::to_string_pretty(&detail)?);
     Ok(())
 }
 
@@ -643,6 +707,20 @@ fn ago(ts: i64, now: i64) -> String {
     }
 }
 
+/// A bare duration like "3d" / "2mo" for deltas between two timestamps.
+fn ago_delta(secs: i64) -> String {
+    let d = secs.max(0);
+    if d < 86_400 {
+        format!("{}h", d / 3600)
+    } else if d < 30 * 86_400 {
+        format!("{}d", d / 86_400)
+    } else if d < 365 * 86_400 {
+        format!("{}mo", d / (30 * 86_400))
+    } else {
+        format!("{}y", d / (365 * 86_400))
+    }
+}
+
 /// Heat colour for a recency fraction `t` in 0..1 (1 = newest → hot).
 fn heat_color(t: f64) -> String {
     let t = t.clamp(0.0, 1.0);
@@ -651,22 +729,23 @@ fn heat_color(t: f64) -> String {
     format!("hsl({hue:.0}, {sat:.0}%, 52%)")
 }
 
-/// Calendar cell colour: teal for spec-only days, orange for code-only, purple
-/// when both changed; brighter with more commits. `None` for a quiet day.
+/// Calendar cell colour: teal for spec-only days, amber for code-only, green
+/// when both changed the same day; brighter with more commits. `None` for a
+/// quiet day. (No purple, per the brand house rule.)
 fn cal_color(spec: usize, code: usize) -> Option<String> {
     let total = spec + code;
     if total == 0 {
         return None;
     }
     let hue = if spec > 0 && code > 0 {
-        280
+        145 // green: both moved together
     } else if spec > 0 {
-        174
+        174 // teal: spec doc
     } else {
-        28
+        38 // amber: code
     };
     let light = 28.0 + (total.min(9) as f64) * 4.2;
-    Some(format!("hsl({hue}, 62%, {light:.0}%)"))
+    Some(format!("hsl({hue}, 58%, {light:.0}%)"))
 }
 
 const MONTHS: [&str; 12] = [
@@ -828,6 +907,15 @@ struct SpecOut {
     commits: Option<usize>,
     /// Recency 0..1 across the project's specs (1 = most recently changed).
     heat: Option<f64>,
+    /// When the spec doc + its companions last changed (relative).
+    doc_updated: Option<String>,
+    /// When this spec's governed code last changed (relative).
+    code_updated: Option<String>,
+    /// The spec likely needs a human/agent review — code moved on since the
+    /// spec doc, spec-sync reports drift, or it has broken references.
+    needs_review: bool,
+    /// Why it needs review, in plain language (null if it does not).
+    review_reason: Option<String>,
     drift: Option<String>,
     color: String,
 }
@@ -910,6 +998,47 @@ fn build_model(
                 })
                 .collect();
 
+            // Review signal: has the code moved on since the spec doc last
+            // changed? plus spec-sync drift and broken references.
+            let (mut doc_updated, mut code_updated, mut needs_review, mut review_reason) =
+                (None, None, false, None);
+            if let Some(g) = git {
+                let doc_ts = std::iter::once(&s.rel_path)
+                    .chain(s.companions.iter())
+                    .filter_map(|p| g.file_last.get(p).copied())
+                    .max()
+                    .unwrap_or(0);
+                let code_ts = sources
+                    .iter()
+                    .filter(|src| src.specs.contains(&i))
+                    .filter_map(|src| g.file_last.get(&src.rel_path).copied())
+                    .max()
+                    .unwrap_or(0);
+                if doc_ts > 0 {
+                    doc_updated = Some(ago(doc_ts, g.now));
+                }
+                if code_ts > 0 {
+                    code_updated = Some(ago(code_ts, g.now));
+                }
+                let phantoms = cov.phantoms.get(i).map(|p| p.len()).unwrap_or(0);
+                if code_ts > 0 && doc_ts > 0 && code_ts > doc_ts + 86_400 {
+                    needs_review = true;
+                    review_reason = Some(format!(
+                        "code changed {} after the spec doc",
+                        ago_delta(code_ts - doc_ts)
+                    ));
+                } else if phantoms > 0 {
+                    needs_review = true;
+                    review_reason = Some(format!("{phantoms} broken reference(s)"));
+                }
+            }
+            if let Some(d) = &s.drift {
+                if d.contains("drift") || d.contains("stale") || d.contains("out of sync") {
+                    needs_review = true;
+                    review_reason = Some("spec-sync reports drift".into());
+                }
+            }
+
             SpecOut {
                 index: i,
                 module: s.module.clone(),
@@ -928,6 +1057,10 @@ fn build_model(
                 updated_ts,
                 commits,
                 heat,
+                doc_updated,
+                code_updated,
+                needs_review,
+                review_reason,
                 drift: s.drift.clone(),
                 color: spec_color(i),
             }
@@ -1109,8 +1242,12 @@ fn lang_for(ext: &str) -> &'static str {
 }
 
 fn spec_color(i: usize) -> String {
-    let hue = (i * 47 + 190) % 360;
-    format!("hsl({hue}, 62%, 58%)")
+    // CorvidLabs categorical hues only (teal, steel, amber, green, clay and
+    // safe neighbours). House rule: no purple, so hues stay clear of 250..330.
+    const HUES: [u32; 8] = [168, 204, 38, 145, 18, 186, 52, 128];
+    let hue = HUES[i % HUES.len()];
+    let light = 58 - ((i / HUES.len()) % 3) as u32 * 8; // 58 / 50 / 42 for repeats
+    format!("hsl({hue}, 58%, {light}%)")
 }
 
 fn open_in_browser(path: &Path) {
@@ -1194,7 +1331,7 @@ fn render_html(m: &Model) -> Result<String> {
             );
         } else if let Some(big) = orphans.first() {
             h.push_str(&format!(
-                "<p class=\"rest\">{} files ({} lines) have no spec yet — the biggest is <code>{}</code> ({} lines).</p>",
+                "<p class=\"rest\">{} files ({} lines) have no spec yet. The biggest is <code>{}</code> ({} lines).</p>",
                 s.orphan_files, commas(s.orphan_loc), esc(&big.path), commas(big.loc)
             ));
         }
@@ -1287,7 +1424,7 @@ fn render_html(m: &Model) -> Result<String> {
         let mut act: Vec<&SpecOut> = m.specs.iter().collect();
         act.sort_by_key(|s| std::cmp::Reverse(s.updated_ts));
         h.push_str("<section class=\"block\"><h2>Spec activity</h2>");
-        h.push_str("<p class=\"hint\">How recently each spec last changed (its doc, companions, or code), hottest first. Cold tiles are specs nothing has touched in a while — the most likely to be stale.</p>");
+        h.push_str("<p class=\"hint\">How recently each spec last changed (its doc, companions, or code), hottest first. Cold tiles are specs nothing has touched in a while, the most likely to be stale.</p>");
         h.push_str("<div class=\"heatgrid\">");
         for spec in &act {
             let color = heat_color(spec.heat.unwrap_or(0.0));
@@ -1317,7 +1454,7 @@ fn render_html(m: &Model) -> Result<String> {
         let now_wd = weekday(now_day);
         let cols: i64 = 53;
         h.push_str("<section class=\"block\"><h2>Contribution calendar</h2>");
-        h.push_str("<p class=\"hint\">Every day of the last year. Teal = a spec doc changed, orange = code changed, purple = both changed the same day. Brighter means more commits.</p>");
+        h.push_str("<p class=\"hint\">Every day of the last year. Teal = a spec doc changed, amber = code changed, green = both changed the same day. Brighter means more commits.</p>");
         h.push_str("<div class=\"calscroll\"><div class=\"calwrap\">");
         // month labels aligned to week columns
         h.push_str("<div class=\"calmonths\">");
@@ -1360,7 +1497,7 @@ fn render_html(m: &Model) -> Result<String> {
             }
         }
         h.push_str("</div></div></div>");
-        h.push_str("<p class=\"legend callegend\"><span class=\"heatkey\" style=\"background:hsl(174,62%,48%)\"></span>spec &nbsp; <span class=\"heatkey\" style=\"background:hsl(28,62%,48%)\"></span>code &nbsp; <span class=\"heatkey\" style=\"background:hsl(280,62%,52%)\"></span>both &nbsp; <span class=\"heatkey\" style=\"background:var(--surface)\"></span>no commits</p>");
+        h.push_str("<p class=\"legend callegend\"><span class=\"heatkey\" style=\"background:hsl(174,58%,48%)\"></span>spec &nbsp; <span class=\"heatkey\" style=\"background:hsl(38,58%,48%)\"></span>code &nbsp; <span class=\"heatkey\" style=\"background:hsl(145,58%,48%)\"></span>both &nbsp; <span class=\"heatkey\" style=\"background:var(--surface)\"></span>no commits</p>");
         h.push_str("</section>");
     }
 
@@ -1392,11 +1529,11 @@ fn render_html(m: &Model) -> Result<String> {
 
     // ---- Explore the spec map (the graph, now a labelled, collapsible section) ----
     h.push_str("<details open class=\"explore\"><summary>Explore the spec map</summary><div class=\"explore-body\">");
-    h.push_str("<p class=\"hint\">Squares are specs, circles are code files; a line means the spec governs that file. Click a spec to focus just its code. Drag the background to pan, scroll to zoom, drag a node to move it.</p>");
+    h.push_str("<p class=\"hint\">Each spec is a bubble; the code files it governs are the dots inside it. A file shared by two specs sits where their bubbles overlap. Files with no spec float outside. Click a bubble to focus it, drag it to move it, drag the background to pan, scroll to zoom.</p>");
     h.push_str("<div class=\"maplegend\">");
-    h.push_str("<span><span class=\"k spec\"></span>spec (square)</span>");
-    h.push_str("<span><span class=\"k file\"></span>code file (circle)</span>");
-    h.push_str("<span><span class=\"k line\"></span>spec governs file</span>");
+    h.push_str("<span><span class=\"k spec\"></span>spec (bubble)</span>");
+    h.push_str("<span><span class=\"k file\"></span>code file</span>");
+    h.push_str("<span><span class=\"k shared\"></span>shared by 2+ specs</span>");
     h.push_str("<span><span class=\"k gray\"></span>no spec</span>");
     h.push_str("</div>");
     // toolbar row 1: search + focus + zoom
@@ -1405,6 +1542,7 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("<span id=\"g-count\" class=\"gcount\"></span>");
     h.push_str("<button id=\"g-focus\" class=\"gchip\" style=\"display:none\">focus: <span></span> ✕</button>");
     h.push_str("<span class=\"gspace\"></span>");
+    h.push_str("<span class=\"lmode\"><button data-layout=\"grouped\" class=\"on\" title=\"Bubbles: specs contain their files\">grouped</button><button data-layout=\"network\" title=\"Network: specs and files linked by edges\">network</button></span>");
     h.push_str("<button id=\"g-zout\" title=\"Zoom out\">−</button><button id=\"g-zin\" title=\"Zoom in\">+</button><button id=\"g-fit\" title=\"Fit to view\">fit</button>");
     h.push_str("</div>");
     // toolbar row 2: filters + color modes
@@ -1490,7 +1628,7 @@ fn render_html(m: &Model) -> Result<String> {
     if !m.phantoms.is_empty() {
         h.push_str("<section class=\"block\"><h2>Broken spec references</h2>");
         h.push_str(
-            "<p class=\"hint\">A spec lists these files, but they are not on disk — most likely renamed or deleted. Update the spec's <code>files:</code> list to match.</p>",
+            "<p class=\"hint\">A spec lists these files, but they are not on disk, most likely renamed or deleted. Update the spec's <code>files:</code> list to match.</p>",
         );
         h.push_str("<table class=\"list\"><tbody>");
         for p in &m.phantoms {

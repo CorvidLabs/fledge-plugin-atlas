@@ -13,16 +13,25 @@ agents.
 fledge atlas                 # write ./<project>.atlas.html
 fledge atlas path/to/repo    # analyze another project
 fledge atlas --open          # write, then open in your browser
-fledge atlas --json          # print the model as JSON (for agents / piping)
+fledge atlas --json          # print the full model as JSON (for agents / piping)
+fledge atlas --review        # JSON: specs that likely need review (for agents)
+fledge atlas --spec <MODULE> # JSON: one spec + its doc & companion contents
 fledge atlas -o report.html  # choose the output path
 ```
 
 ## What it shows
 
-- **Spec & code graph** — large nodes are specs, small nodes are source files,
-  an edge means a spec governs that file. Files pulled between two specs are the
-  overlap. Drag to rearrange, hover to trace a node's relationships, scroll to
-  zoom. Color the graph **by spec**, **by language**, or **by test coverage**.
+- **Spec & code graph** — two lenses on the same data:
+  - **Grouped (default)** — each spec is a translucent **bubble** and the code
+    files it governs are the **dots inside** it. A file shared by two specs sits
+    where their bubbles overlap; files with no spec float outside. Reads as
+    territory: you see at a glance what each spec owns and where they intersect.
+  - **Network** — specs and files as nodes joined by edges, for tracing one
+    exact relationship.
+  Both pan (drag background), zoom (scroll / buttons / fit), search, and drag a
+  bubble to move it with its files. Click a bubble to focus just its subgraph.
+  Dashed bubbles flag specs that likely need review. Color dots **by spec**,
+  **by language**, **by recency**, or **by test coverage**.
 - **Coverage** — share of lines of code under at least one spec.
 - **Overlap** — files claimed by more than one spec.
 - **Orphan code** — source files no spec references, largest first: the domain
@@ -74,7 +83,23 @@ field**, so it never has to infer the picture from raw numbers.
 - **`files[]`** (each with its governing `specs`, `orphan` / `overlap` flags,
   `test_pct`, `updated_ts`), and **`phantoms[]`**.
 
-Nothing is re-derived — humans and agents reason over the exact same model.
+Two more commands make atlas an agent's primary lens on a project:
+
+- **`fledge atlas --review`** prints the specs that likely need attention, each
+  with a plain reason: *"code changed 8d after the spec doc"*, spec-sync drift,
+  or broken references. It's the agent's "what should I check?" queue. Every
+  spec in `--json` also carries `needs_review`, `review_reason`, `doc_updated`,
+  and `code_updated`.
+- **`fledge atlas --spec <MODULE>`** returns one spec's full detail *including
+  the actual text of its doc and every companion file* (requirements/tasks/
+  context/testing), plus its governed files. One call feeds an agent everything
+  it needs to reason about or update that spec.
+
+The HTML also includes a **contribution calendar**: a GitHub-style day grid
+coloured teal (a spec doc changed), amber (code changed), or green (both changed
+the same day). The same data is in `--json` under `calendar`.
+
+Nothing is re-derived: humans and agents reason over the exact same model.
 
 ## Install
 
