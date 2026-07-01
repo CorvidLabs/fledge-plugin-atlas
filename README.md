@@ -151,6 +151,24 @@ field**, so it never has to infer the picture from raw numbers.
   specs) and `dependents[]` (the reverse edges: specs that depend on it).
 - **`files[]`** (each with its governing `specs`, `orphan` / `overlap` flags,
   `test_pct`, `updated_ts`), and **`phantoms[]`**.
+- **`action_plan[]`** — an ordered, machine-readable TODO list for an agent,
+  assembled deterministically from the fields above and sorted by `severity`
+  (0..100) descending. Each entry is `{ kind, target, severity, why, command }`:
+  - **`kind`** — one of `"fix_ref"` (a spec points at a missing file),
+    `"review_spec"` (a needs-review spec), `"write_spec"` (a large orphan file
+    with no spec), or `"add_tests"` (a spec-covered file under 100% test
+    coverage, from the same logic as `--gaps`).
+  - **`target`** — the spec module or source file the action operates on.
+  - **`severity`** — priority on a 0..100 scale; broken references outrank
+    review work, which outranks writing specs for big orphans, then coverage
+    gaps. The array is sorted by this, highest first.
+  - **`why`** — a plain-language reason, safe to relay to a human verbatim.
+  - **`command`** — the exact next command to run, e.g.
+    `fledge atlas <proj> --spec <module>` or `fledge atlas <proj> --owns <path>`.
+
+  This hands an agent an ordered worklist with the precise next command for each
+  item. The HTML surfaces the same list as an **Agent action plan** panel and a
+  ranked **Risk hotspots** table (churn by size by risk, "fix these first").
 
 A handful of commands make atlas an agent's primary lens on a project:
 
