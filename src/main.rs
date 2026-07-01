@@ -2155,7 +2155,9 @@ fn render_html(m: &Model) -> Result<String> {
     // ---- Component show/hide bar (lists only the sections we actually emit) ----
     let mut comps: Vec<(&str, &str)> = vec![
         ("c-verdict", "verdict"),
+        ("c-delta", "since last visit"),
         ("c-glance", "at a glance"),
+        ("c-vitals", "vitals"),
         ("c-pet", "pet"),
     ];
     if m.stats.has_history {
@@ -2170,6 +2172,7 @@ fn render_html(m: &Model) -> Result<String> {
     comps.push(("c-graph", "spec map"));
     if !m.specs.is_empty() {
         comps.push(("c-specs", "specs"));
+        comps.push(("c-debt", "spec debt"));
     }
     if !m.threemd.is_empty() {
         comps.push(("c-3md", "3md docs"));
@@ -2255,6 +2258,12 @@ fn render_html(m: &Model) -> Result<String> {
     ));
     h.push_str("</section>");
 
+    // ---- Since you last looked (localStorage-driven, filled by since.js) ----
+    h.push_str("<section class=\"block comp\" id=\"c-delta\"><h2>Since you last looked</h2>");
+    h.push_str("<p class=\"hint\">Specs whose doc or code changed since your last visit to this atlas. Tracked locally in your browser; nothing leaves the page.</p>");
+    h.push_str("<div id=\"delta-body\" class=\"delta\"><p class=\"delta-empty\">Reading your last visit&hellip;</p></div>");
+    h.push_str("</section>");
+
     // ---- At a glance: numbers, each with a plain definition ----
     h.push_str("<section class=\"stats glance comp\" id=\"c-glance\">");
     stat(
@@ -2311,6 +2320,38 @@ fn render_html(m: &Model) -> Result<String> {
         );
     }
     h.push_str("</section>");
+
+    // ---- Project vitals cockpit: the headline numbers as large tiles ----
+    h.push_str("<section class=\"block comp\" id=\"c-vitals\"><h2>Project vitals</h2>");
+    let (vchip_cls, vchip_txt) = health(s);
+    h.push_str(&format!(
+        "<p class=\"hint\">The whole cockpit in one row. <span class=\"chip {vchip_cls}\">{vchip_txt}</span></p>"
+    ));
+    h.push_str("<div class=\"vitals\">");
+    vital(&mut h, &format!("{:.0}%", s.coverage_pct), "spec coverage", "good");
+    if let Some(tc) = s.test_coverage_pct {
+        vital(&mut h, &format!("{tc:.0}%"), "test coverage", "good");
+    }
+    vital(
+        &mut h,
+        &s.orphan_files.to_string(),
+        "orphan files",
+        if s.orphan_files > 0 { "warn" } else { "" },
+    );
+    vital(&mut h, &s.overlap_files.to_string(), "overlap", "");
+    vital(
+        &mut h,
+        &s.phantom_refs.to_string(),
+        "broken refs",
+        if s.phantom_refs > 0 { "warn" } else { "" },
+    );
+    vital(
+        &mut h,
+        &review_n.to_string(),
+        "need review",
+        if review_n > 0 { "warn" } else { "" },
+    );
+    h.push_str("</div></section>");
 
     // ---- Corvid pet ----
     h.push_str(&render_pet(&m.pet));
@@ -2550,6 +2591,52 @@ fn render_html(m: &Model) -> Result<String> {
         h.push_str("</div></section>");
     }
 
+    // ---- Spec-debt scoreboard: a 0-100 debt score per spec, worst first ----
+    if !m.specs.is_empty() {
+        let ts_min = m.specs.iter().filter_map(|s| s.updated_ts).min();
+        let ts_max = m.specs.iter().filter_map(|s| s.updated_ts).max();
+        let mut debts: Vec<SpecDebt> = m
+            .specs
+            .iter()
+            .map(|s| spec_debt(s, ts_min, ts_max))
+            .collect();
+        debts.sort_by(|a, b| b.total.total_cmp(&a.total));
+        h.push_str("<section class=\"block comp\" id=\"c-debt\"><h2>Spec debt scoreboard</h2>");
+        h.push_str("<p class=\"hint\">A 0 to 100 debt score per spec, worst first. It weighs needs-review (30), spec-sync drift (20), low test coverage (20), staleness (15), and missing core companions (15). Lower is better; the bar breaks the score into its factors.</p>");
+        h.push_str("<table class=\"debttable\"><thead><tr><th>spec</th><th class=\"num\">debt</th><th class=\"dbarhead\">breakdown</th></tr></thead><tbody>");
+        for d in &debts {
+            h.push_str("<tr>");
+            h.push_str(&format!("<td class=\"dmod\">{}</td>", esc(&d.spec.module)));
+            let tone = if d.total >= 55.0 {
+                "warn"
+            } else if d.total <= 15.0 {
+                "good"
+            } else {
+                ""
+            };
+            h.push_str(&format!(
+                "<td class=\"num dscore {tone}\">{:.0}</td>",
+                d.total.round()
+            ));
+            h.push_str("<td class=\"dbarcell\"><div class=\"debtbar\">");
+            debt_seg(&mut h, d.review, "--chart-5", "needs review");
+            debt_seg(&mut h, d.drift, "--chart-3", "spec-sync drift");
+            debt_seg(&mut h, d.cov, "--chart-2", "low test coverage");
+            debt_seg(&mut h, d.stale, "--chart-1", "staleness");
+            debt_seg(&mut h, d.comp, "--chart-4", "missing companions");
+            h.push_str("</div></td>");
+            h.push_str("</tr>");
+        }
+        h.push_str("</tbody></table>");
+        h.push_str("<p class=\"legend debtlegend\">\
+<span class=\"heatkey\" style=\"background:var(--chart-5)\"></span>needs review &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-3)\"></span>drift &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-2)\"></span>test coverage &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>staleness &nbsp; \
+<span class=\"heatkey\" style=\"background:var(--chart-4)\"></span>companions</p>");
+        h.push_str("</section>");
+    }
+
     // Broken spec references (phantoms)
     if !m.phantoms.is_empty() {
         h.push_str(
@@ -2578,6 +2665,7 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str(GRAPH_JS);
     h.push_str(COMPONENTS_JS);
     h.push_str(THREEMD_JS);
+    h.push_str(SINCE_JS);
     h.push_str("</main></body></html>");
     Ok(h)
 }
@@ -2590,6 +2678,85 @@ fn stat(h: &mut String, value: &str, label: &str, define: &str, accent: bool) {
         esc(label),
         esc(define)
     ));
+}
+
+/// One large cockpit tile: a big number and a small label. `tone` is "good"
+/// (accent), "warn" (something to fix), or "" (neutral).
+fn vital(h: &mut String, value: &str, label: &str, tone: &str) {
+    h.push_str(&format!(
+        "<div class=\"vtile {tone}\"><span class=\"vv\">{}</span><span class=\"vl\">{}</span></div>",
+        esc(value),
+        esc(label)
+    ));
+}
+
+/// The 4 core spec-sync companions a healthy spec should carry. Missing ones add
+/// to the spec's debt score.
+const CORE_COMPANIONS: [&str; 4] = ["requirements.md", "tasks.md", "context.md", "testing.md"];
+
+/// A spec's debt, decomposed into its factors so the scoreboard can both sort by
+/// the total and draw a stacked bar. Every factor is already on the 0..100 scale
+/// (they sum to at most 100).
+struct SpecDebt<'a> {
+    spec: &'a SpecOut,
+    /// +30 when the spec is flagged as needing review.
+    review: f64,
+    /// +20 when spec-sync reports drift.
+    drift: f64,
+    /// Up to +20 for low test coverage ((100 - test_pct) * 0.2), 0 when unknown.
+    cov: f64,
+    /// Up to +15 the longer it has been since the spec last moved.
+    stale: f64,
+    /// +3 per missing core companion, capped at +15.
+    comp: f64,
+    total: f64,
+}
+
+/// Score one spec's debt from its serializable fields. Staleness is normalized
+/// across the project's specs (`ts_min`..`ts_max`, oldest = full weight); a spec
+/// with no git history while others have some is treated as maximally stale.
+fn spec_debt(s: &SpecOut, ts_min: Option<i64>, ts_max: Option<i64>) -> SpecDebt<'_> {
+    let review = if s.needs_review { 30.0 } else { 0.0 };
+    let drift = if s.drift.is_some() { 20.0 } else { 0.0 };
+    let cov = match s.test_pct {
+        Some(p) => ((100.0 - p) * 0.2).clamp(0.0, 20.0),
+        None => 0.0,
+    };
+    let present = s
+        .companions
+        .iter()
+        .filter(|c| CORE_COMPANIONS.contains(&c.name.as_str()))
+        .count();
+    let missing = CORE_COMPANIONS.len().saturating_sub(present);
+    let comp = (missing as f64 * 3.0).min(15.0);
+    let stale = match (s.updated_ts, ts_min, ts_max) {
+        (Some(ts), Some(mn), Some(mx)) if mx > mn => {
+            (mx - ts) as f64 / (mx - mn) as f64 * 15.0
+        }
+        // Some history exists in the project but not for this spec: maximally stale.
+        (None, Some(_), Some(_)) => 15.0,
+        _ => 0.0,
+    };
+    let total = (review + drift + cov + stale + comp).clamp(0.0, 100.0);
+    SpecDebt {
+        spec: s,
+        review,
+        drift,
+        cov,
+        stale,
+        comp,
+        total,
+    }
+}
+
+/// One coloured segment of a spec's stacked debt bar. Widths are percentages of
+/// the full 0..100 scale, so segment widths sum to the spec's debt score.
+fn debt_seg(h: &mut String, val: f64, token: &str, label: &str) {
+    if val >= 0.5 {
+        h.push_str(&format!(
+            "<span style=\"width:{val:.2}%;background:var({token})\" title=\"{label}: +{val:.0}\"></span>"
+        ));
+    }
 }
 
 /// A plain-language health verdict for the status chip.
@@ -2627,3 +2794,4 @@ const STYLE: &str = include_str!("style.css");
 const GRAPH_JS: &str = include_str!("graph.js");
 const COMPONENTS_JS: &str = include_str!("components.js");
 const THREEMD_JS: &str = include_str!("threemd.js");
+const SINCE_JS: &str = include_str!("since.js");

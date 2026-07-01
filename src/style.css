@@ -268,4 +268,36 @@ table.list{border-collapse:collapse;width:100%;font-size:14px}
 footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:var(--faint);font-size:13px}
 /* the one allowed gradient: a feather-sheen hairline, exactly once, at the very bottom */
 .hairline-iridescent{height:5px;border:0;margin-top:26px;background:linear-gradient(90deg,#0E6F66 0%,#1799A3 55%,#1E6FA8 100%)}
+/* ---- Project vitals cockpit (c-vitals) ---- */
+.vitals{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+.vtile{background:var(--bg);padding:22px 20px;display:flex;flex-direction:column;gap:8px}
+.vtile .vv{font-size:38px;font-weight:800;letter-spacing:-.03em;line-height:1;color:var(--text);font-variant-numeric:tabular-nums}
+.vtile .vl{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint)}
+.vtile.good .vv{color:var(--accent)}
+.vtile.warn{background:color-mix(in srgb,var(--warn) 7%,var(--bg))}
+.vtile.warn .vv{color:var(--warn)}
+.vtile.warn .vl{color:color-mix(in srgb,var(--warn) 70%,var(--faint))}
+/* ---- Spec-debt scoreboard (c-debt) ---- */
+.debttable{border-collapse:collapse;width:100%;font-size:14px}
+.debttable th{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
+.debttable th.num{text-align:right}
+.debttable td{border-bottom:1px solid var(--line);padding:9px 12px;vertical-align:middle}
+.debttable .dmod{font-family:var(--font-mono);font-size:13px;color:var(--text);white-space:nowrap}
+.debttable .dscore{text-align:right;font-family:var(--font-mono);font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted);width:64px}
+.debttable .dscore.warn{color:var(--warn)}
+.debttable .dscore.good{color:var(--accent)}
+.debttable .dbarhead{width:55%}
+.debttable .dbarcell{width:55%}
+.debtbar{display:flex;height:12px;background:var(--surface-strong);border:1px solid var(--line);overflow:hidden}
+.debtbar span{display:block;height:100%}
+.debtlegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 2px;margin-top:14px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.debtlegend .heatkey{border:1px solid var(--line)}
+/* ---- Since you last looked (c-delta) ---- */
+.delta{border:1px solid var(--line);background:var(--surface);padding:18px 20px}
+.delta .delta-lead,.delta .delta-first,.delta .delta-empty{margin:0;font-size:14px;color:var(--muted);line-height:1.5}
+.delta .delta-lead{color:var(--text);font-weight:600;margin-bottom:12px}
+.delta-list{list-style:none;margin:0;padding:0;display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.delta-list li{display:flex;align-items:baseline;gap:12px;background:var(--surface);padding:9px 12px;flex-wrap:wrap}
+.delta-list .dl-mod{font-family:var(--font-mono);font-size:13px;color:var(--text)}
+.delta-list .dl-meta{font-family:var(--font-mono);font-size:11px;color:var(--faint);margin-left:auto}
 </style>
