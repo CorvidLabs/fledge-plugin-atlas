@@ -13,15 +13,18 @@
   const setVB = () => svgEl.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
   setVB();
 
-  // ---- colour scales (categorical, no purple) ----
-  const LANGH = [168,204,38,145,18,186,52,128];
+  // ---- colour scales: brand tokens only, theme-aware via color-mix ----
+  const CHART = ['--chart-1','--chart-2','--chart-3','--chart-4','--chart-5'];
   const LANGC = {};
-  [...new Set(data.files.map(f=>f.lang))].forEach((l,i)=>{ LANGC[l] = `hsl(${LANGH[i%LANGH.length]},52%,58%)`; });
+  [...new Set(data.files.map(f=>f.lang))].forEach((l,i)=>{
+    const mix = 100 - (Math.floor(i/CHART.length)%3)*22;
+    LANGC[l] = `color-mix(in srgb, var(${CHART[i%CHART.length]}) ${mix}%, var(--bg))`;
+  });
   const NOSPEC = 'var(--surface-strong)';
-  const covColor = pct => pct==null ? NOSPEC : `hsl(${Math.round(pct*1.45)},55%,52%)`; // 0 red-clay -> 100 green
+  const covColor = pct => pct==null ? NOSPEC : `color-mix(in srgb, var(--chart-4) ${Math.round(pct)}%, var(--danger))`; // 0 clay -> 100 green
   const tss = [...data.specs.map(s=>s.updated_ts), ...data.files.map(f=>f.updated_ts)].filter(t=>t!=null);
   const tmin = tss.length ? Math.min(...tss) : 0, tspan = Math.max(1, (tss.length ? Math.max(...tss) : 1) - tmin);
-  const ageColor = ts => { if(ts==null) return NOSPEC; const t=(ts-tmin)/tspan; return `hsl(${Math.round(204-t*186)},${Math.round(30+t*45)}%,52%)`; };
+  const ageColor = ts => { if(ts==null) return NOSPEC; const t=(ts-tmin)/tspan; return `color-mix(in srgb, var(--chart-3) ${Math.round(t*100)}%, var(--chart-2))`; }; // cold steel -> hot amber
 
   // ---- nodes ----
   const specByIdx = {};
@@ -123,12 +126,12 @@
       const g=mk('g','node spec'+(s.needs?' needs':''));
       if(layout==='grouped'){
         const c=mk('circle','bubble'); c.setAttribute('r',s.R);
-        c.setAttribute('fill',s.color); c.setAttribute('stroke',s.color); s.bub=c; g.appendChild(c);
+        c.style.fill=s.color; c.style.stroke=s.color; s.bub=c; g.appendChild(c);
       } else {
         const c=mk('circle'); s.nr=clamp(9+Math.sqrt(s.members.length)*2.2,10,26); c.setAttribute('r',s.nr);
-        c.setAttribute('fill',s.color); s.bub=c; g.appendChild(c);
+        c.style.fill=s.color; s.bub=c; g.appendChild(c);
       }
-      const t=mk('text','slabel'); t.setAttribute('text-anchor','middle'); t.textContent=s.label; t.setAttribute('fill',s.color);
+      const t=mk('text','slabel'); t.setAttribute('text-anchor','middle'); t.textContent=s.label; t.style.fill=s.color;
       // Only label big bubbles by default; small specs reveal on hover/focus/search.
       if(layout==='grouped' && focused==null && denseLabels && s.R < 52) t.style.display='none';
       g.appendChild(t); s.t=t; s.g=g; gNodes.appendChild(g); wire(s,g);
@@ -136,7 +139,7 @@
     // file dots
     for(const f of activeFiles){
       const g=mk('g','node file'+(f.overlap?' shared':'')+(f.orphan?' orph':''));
-      const c=mk('circle'); c.setAttribute('r',f.fr); c.setAttribute('fill',colorOf(f)); f.shape=c; g.appendChild(c);
+      const c=mk('circle'); c.setAttribute('r',f.fr); c.style.fill=colorOf(f); f.shape=c; g.appendChild(c);
       f.g=g; f.t=null; gNodes.appendChild(g); wire(f,g);
     }
     if(layout==='grouped') layoutOrphans();
@@ -299,7 +302,7 @@
   const lb=$('t-labels'); if(lb){ lb.addEventListener('change',()=>{ showLabels=lb.checked; applyLabels(); }); }
   document.querySelectorAll('.cmode button').forEach(b=>b.addEventListener('click',()=>{
     document.querySelectorAll('.cmode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); colorMode=b.dataset.mode;
-    activeFiles.forEach(f=>f.shape.setAttribute('fill',colorOf(f)));
+    activeFiles.forEach(f=>{ f.shape.style.fill=colorOf(f); });
   }));
   document.querySelectorAll('.lmode button').forEach(b=>b.addEventListener('click',()=>{
     if(b.dataset.layout===layout) return;

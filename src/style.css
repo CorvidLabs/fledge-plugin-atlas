@@ -5,14 +5,16 @@
   --c-bg:250 249 246;--c-surface:255 255 255;--c-surface-strong:220 218 210;
   --c-text:21 24 27;--c-text-muted:52 56 61;--c-text-faint:80 85 91;
   --c-accent:14 111 102;--c-accent-strong:11 87 80;--c-danger:132 36 30;
-  --c-warning:138 90 0;--c-success:47 107 58;--c-chart-2:30 111 168;
+  --c-warning:138 90 0;--c-success:47 107 58;
+  --c-chart-1:14 111 102;--c-chart-2:30 111 168;--c-chart-3:176 122 30;--c-chart-4:47 107 58;--c-chart-5:160 73 46;
   color-scheme:light
 }
 @media (prefers-color-scheme:dark){:root{
   --c-bg:19 22 25;--c-surface:27 31 35;--c-surface-strong:39 44 49;
   --c-text:244 243 239;--c-text-muted:200 198 190;--c-text-faint:163 161 153;
   --c-accent:69 208 188;--c-accent-strong:99 217 199;--c-danger:240 138 125;
-  --c-warning:224 176 90;--c-success:111 201 138;--c-chart-2:107 182 224;
+  --c-warning:224 176 90;--c-success:111 201 138;
+  --c-chart-1:69 208 188;--c-chart-2:107 182 224;--c-chart-3:224 176 90;--c-chart-4:111 201 138;--c-chart-5:224 145 111;
   color-scheme:dark
 }}
 :root{
@@ -20,7 +22,8 @@
   --text:rgb(var(--c-text));--muted:rgb(var(--c-text-muted));--faint:rgb(var(--c-text-faint));
   --accent:rgb(var(--c-accent));--accent-strong:rgb(var(--c-accent-strong));
   --warn:rgb(var(--c-warning));--bad:rgb(var(--c-danger));--success:rgb(var(--c-success));
-  --steel:rgb(var(--c-chart-2));
+  --chart-1:rgb(var(--c-chart-1));--chart-2:rgb(var(--c-chart-2));--chart-3:rgb(var(--c-chart-3));
+  --chart-4:rgb(var(--c-chart-4));--chart-5:rgb(var(--c-chart-5));--steel:rgb(var(--c-chart-2));
   --line:rgb(var(--c-text) / 0.14);
   --font-display:"Schibsted Grotesk","Helvetica Neue",system-ui,sans-serif;
   --font-mono:"Spline Sans Mono",ui-monospace,monospace
@@ -160,8 +163,8 @@ details.explore[open]>summary::before{transform:rotate(90deg)}
 .heatgrid .tname{display:block;font-family:var(--font-mono);font-size:14px;color:var(--text)}
 .heatgrid .tmeta{display:block;font-size:12px;color:var(--muted);margin-top:4px}
 .heatkey{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:middle}
-.heatkey.hot{background:hsl(18,80%,52%)}
-.heatkey.cold{background:hsl(210,25%,52%)}
+.heatkey.hot{background:var(--chart-3)}
+.heatkey.cold{background:var(--chart-2)}
 /* contribution calendar */
 .calscroll{overflow-x:auto;padding-bottom:6px}
 .calwrap{display:inline-block;min-width:min-content}

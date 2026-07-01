@@ -872,31 +872,38 @@ fn ago_delta(secs: i64) -> String {
     }
 }
 
-/// Heat colour for a recency fraction `t` in 0..1 (1 = newest → hot).
+/// Heat colour for a recency fraction `t` in 0..1 (1 = newest → hot), ramped
+/// between two brand tokens: steel (--chart-2, cold) and amber (--chart-3, hot).
 fn heat_color(t: f64) -> String {
-    let t = t.clamp(0.0, 1.0);
-    let hue = 210.0 - t * 192.0; // 210 (cold blue) → 18 (hot orange)
-    let sat = 25.0 + t * 55.0;
-    format!("hsl({hue:.0}, {sat:.0}%, 52%)")
+    let pct = (t.clamp(0.0, 1.0) * 100.0).round() as u32;
+    format!("color-mix(in srgb, var(--chart-3) {pct}%, var(--chart-2))")
 }
 
-/// Calendar cell colour: teal for spec-only days, amber for code-only, green
-/// when both changed the same day; brighter with more commits. `None` for a
-/// quiet day. (No purple, per the brand house rule.)
+/// Calendar cell colour, from brand tokens only: teal (--chart-1) for spec-only
+/// days, amber (--chart-3) for code-only, green (--chart-4) when both changed the
+/// same day; the token is mixed over the surface so it brightens with more
+/// commits. `None` for a quiet day. (No purple, per the brand house rule.)
 fn cal_color(spec: usize, code: usize) -> Option<String> {
     let total = spec + code;
     if total == 0 {
         return None;
     }
-    let hue = if spec > 0 && code > 0 {
-        145 // green: both moved together
+    let token = if spec > 0 && code > 0 {
+        "--chart-4" // both moved together
     } else if spec > 0 {
-        174 // teal: spec doc
+        "--chart-1" // spec doc
     } else {
-        38 // amber: code
+        "--chart-3" // code
     };
-    let light = 28.0 + (total.min(9) as f64) * 4.2;
-    Some(format!("hsl({hue}, 58%, {light:.0}%)"))
+    let level = match total {
+        1 => 34,
+        2..=3 => 54,
+        4..=6 => 74,
+        _ => 92,
+    };
+    Some(format!(
+        "color-mix(in srgb, var({token}) {level}%, var(--surface))"
+    ))
 }
 
 const MONTHS: [&str; 12] = [
@@ -1723,12 +1730,20 @@ fn lang_for(ext: &str) -> &'static str {
 }
 
 fn spec_color(i: usize) -> String {
-    // CorvidLabs categorical hues only (teal, steel, amber, green, clay and
-    // safe neighbours). House rule: no purple, so hues stay clear of 250..330.
-    const HUES: [u32; 8] = [168, 204, 38, 145, 18, 186, 52, 128];
-    let hue = HUES[i % HUES.len()];
-    let light = 58 - ((i / HUES.len()) % 3) as u32 * 8; // 58 / 50 / 42 for repeats
-    format!("hsl({hue}, 58%, {light}%)")
+    // The five brand categorical tokens (teal, steel, amber, green, clay),
+    // cycled; repeats past five are darkened toward the background so they stay
+    // distinct. Theme-aware and on-palette (no purple).
+    const CHART: [&str; 5] = [
+        "--chart-1",
+        "--chart-2",
+        "--chart-3",
+        "--chart-4",
+        "--chart-5",
+    ];
+    let token = CHART[i % CHART.len()];
+    let shade = (i / CHART.len()) % 3; // 0,1,2 -> progressively darker repeats
+    let mix = 100 - shade as u32 * 22; // 100 / 78 / 56
+    format!("color-mix(in srgb, var({token}) {mix}%, var(--bg))")
 }
 
 fn open_in_browser(path: &Path) {
@@ -2013,7 +2028,7 @@ fn render_html(m: &Model) -> Result<String> {
             }
         }
         h.push_str("</div></div></div>");
-        h.push_str("<p class=\"legend callegend\"><span class=\"heatkey\" style=\"background:hsl(174,58%,48%)\"></span>spec &nbsp; <span class=\"heatkey\" style=\"background:hsl(38,58%,48%)\"></span>code &nbsp; <span class=\"heatkey\" style=\"background:hsl(145,58%,48%)\"></span>both &nbsp; <span class=\"heatkey\" style=\"background:var(--surface)\"></span>no commits</p>");
+        h.push_str("<p class=\"legend callegend\"><span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>spec &nbsp; <span class=\"heatkey\" style=\"background:var(--chart-3)\"></span>code &nbsp; <span class=\"heatkey\" style=\"background:var(--chart-4)\"></span>both &nbsp; <span class=\"heatkey\" style=\"background:var(--surface-strong)\"></span>no commits</p>");
         h.push_str("</section>");
     }
 
