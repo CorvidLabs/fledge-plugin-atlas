@@ -19,6 +19,7 @@ fledge atlas --spec <MODULE> # JSON: one spec + its doc & companion contents
 fledge atlas --owns <PATH>   # JSON: which specs govern a file (reverse index)
 fledge atlas --since <REF>   # JSON: specs touched by changes since a git ref
 fledge atlas --gaps          # JSON: coverage-gap worklist (needs an lcov report)
+fledge atlas --scaffold      # print a *.spec.md stub for the top orphan cluster
 fledge atlas --3md           # write a .3md spec deck (open in the 3md viewer)
 fledge atlas --timeline      # write a .3md timeline, one plane per week of git history
 fledge atlas -o report.html  # choose the output path
@@ -70,6 +71,14 @@ Scrub the Z axis to walk the project forward through time.
 - **Overlap** — files claimed by more than one spec.
 - **Orphan code** — source files no spec references, largest first: the domain
   no contract describes.
+- **Orphan clusters** — those orphan files rolled up into the nearest directory
+  a single spec could adopt, ranked by leverage (total LOC weighted toward
+  recent changes) with a coverage-ROI bar showing the coverage one spec would
+  add. The headline for a spec-less project, plus a **Copy stub spec** button
+  (and the `--scaffold` flag) that hands you a ready-to-save `*.spec.md`.
+- **Language mix** — a one-line stacked strip of the language composition by
+  lines of code and file count, cheap orientation for any project. In `--json`
+  under `languages`; clusters are under `clusters`.
 - **Phantom references** — files a spec declares that are *missing on disk*: a
   drift signal. (Files that exist but are not code — configs, docs — are counted
   as non-code governed files, not phantoms.)
@@ -168,6 +177,15 @@ A handful of commands make atlas an agent's primary lens on a project:
   under 100% test coverage, each with the specs governing it and its uncovered
   line count, ranked by uncovered lines (orphan files weighted lower). Needs an
   lcov report; without one it returns a note and an empty list.
+- **`fledge atlas --scaffold`** prints a ready-to-save `*.spec.md` skeleton for
+  the project's top-ranked **orphan cluster** to stdout: valid spec-sync
+  frontmatter (`module`, `status: draft`, `version: 0.1.0`, `owner`, and the
+  cluster's real relative `files:`) plus `## Purpose` / `## Requirements` stubs.
+  It is how an agent authors the first spec of a spec-less project unattended:
+  `fledge atlas --scaffold > specs/<module>.spec.md`, then fill in the TODOs.
+  The atlas HTML surfaces the same stub behind a **Copy stub spec** button, and
+  ranks every orphan cluster in a leverage board (the biggest, most recently
+  changed directory a single spec could adopt) with a coverage-ROI bar.
 
 The HTML also includes a **contribution calendar**: a GitHub-style day grid
 coloured teal (a spec doc changed), amber (code changed), or green (both changed
