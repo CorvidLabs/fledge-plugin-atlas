@@ -17,15 +17,20 @@
   const specNodes = data.specs.map(s=>({
     id:'S'+s.index, kind:'spec', label:s.module, specColor:s.color, langColor:s.color,
     covColor: s.test_pct==null ? s.color : `hsl(${Math.round(s.test_pct*1.2)},60%,52%)`,
+    ageColor: ageColor(s.updated_ts),
     r: Math.max(11, Math.min(26, 8+Math.sqrt(Math.max(s.loc,1))/7)),
     loc:s.loc, files:s.files
   }));
   const covColor = pct => pct==null ? '#3a424a' : `hsl(${Math.round(pct*1.2)},60%,52%)`; // red→green
+  // recency heat scale across all dated nodes (cold blue → hot orange)
+  const tss = [...data.specs.map(s=>s.updated_ts), ...data.files.map(f=>f.updated_ts)].filter(t=>t!=null);
+  const tmin = tss.length ? Math.min(...tss) : 0, tspan = Math.max(1, (tss.length ? Math.max(...tss) : 1) - tmin);
+  const ageColor = ts => { if(ts==null) return '#3a424a'; const t=(ts-tmin)/tspan; return `hsl(${Math.round(210-t*192)},${Math.round(25+t*55)}%,52%)`; };
   const fileNodes = data.files.map((f,i)=>({
     id:'F'+i, kind:'file', label:f.path, lang:f.lang, loc:f.loc,
     orphan:f.orphan, overlap:f.overlap, specs:f.specs, testPct:f.test_pct,
     specColor: f.orphan ? '#3a424a' : (f.specs.length===1 ? data.specs[f.specs[0]].color : '#e7ecef'),
-    langColor: LANGC[f.lang], covColor: covColor(f.test_pct),
+    langColor: LANGC[f.lang], covColor: covColor(f.test_pct), ageColor: ageColor(f.updated_ts),
     r: Math.max(3.5, Math.min(12, 2.5+Math.sqrt(Math.max(f.loc,1))/5.5))
   }));
   const nodes = specNodes.concat(fileNodes);
@@ -56,7 +61,7 @@
   const gNodes = document.createElementNS(NS,'g');
   svgEl.appendChild(gLinks); svgEl.appendChild(gNodes);
 
-  const colorOf = n => colorMode==='cov' ? n.covColor : (colorMode==='lang' ? n.langColor : n.specColor);
+  const colorOf = n => colorMode==='cov' ? n.covColor : colorMode==='age' ? n.ageColor : colorMode==='lang' ? n.langColor : n.specColor;
 
   function recompute(){
     active = nodes.filter(n => n.kind==='spec' || showOrphans || !n.orphan);
@@ -210,7 +215,7 @@
 
   // Deep-linkable color mode: #cov / #lang / #spec selects it on load.
   const hash=(location.hash||'').replace('#','');
-  if(['spec','lang','cov'].includes(hash)){
+  if(['spec','lang','cov','age'].includes(hash)){
     const b=document.querySelector(`.cmode button[data-mode="${hash}"]`);
     if(b){ document.querySelectorAll('.cmode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); colorMode=hash; }
   }

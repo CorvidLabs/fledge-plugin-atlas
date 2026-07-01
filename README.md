@@ -32,6 +32,11 @@ fledge atlas -o report.html  # choose the output path
   as non-code governed files, not phantoms.)
 - **Test coverage overlay** — when an lcov report is present (see below), per
   file, per spec, and overall test coverage is layered onto the atlas.
+- **Spec activity heat map** — when the project is a git repo, each spec is
+  dated from its footprint (spec doc + companions + governed files): a hot→cold
+  heat map of most-recently-changed to most-stale, with commit counts, plus a
+  "by recency" graph color mode. Each spec's **companion docs** (requirements.md,
+  tasks.md, context.md, testing.md) are listed with their own last-changed date.
 
 ## How it reads a project
 
@@ -63,8 +68,11 @@ field**, so it never has to infer the picture from raw numbers.
 - **`stats`** — specs, source_files, total_loc, covered_loc, orphan_loc,
   covered_files, orphan_files, overlap_files, phantom_refs, coverage_pct,
   test_coverage_pct.
-- **`specs[]`**, **`files[]`** (each with its governing `specs`, `orphan` /
-  `overlap` flags and `test_pct`), and **`phantoms[]`**.
+- **`specs[]`** — each with governed file count, `test_pct`, `companions[]`
+  (with per-companion `updated`), and git activity: `updated` ("3d ago"),
+  `updated_ts`, `commits`, `heat` (0..1 recency).
+- **`files[]`** (each with its governing `specs`, `orphan` / `overlap` flags,
+  `test_pct`, `updated_ts`), and **`phantoms[]`**.
 
 Nothing is re-derived — humans and agents reason over the exact same model.
 

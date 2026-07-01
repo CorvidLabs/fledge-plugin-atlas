@@ -83,6 +83,9 @@ struct Spec {
     owner: String,
     rel_path: String,
     files: Vec<String>,
+    /// Sibling docs in the spec's own directory (spec-sync companions:
+    /// requirements.md, tasks.md, context.md, …). Relative paths.
+    companions: Vec<String>,
     sections: usize,
     drift: Option<String>,
 }
@@ -121,7 +124,8 @@ fn run() -> Result<()> {
     let mut sources = load_sources(&root);
     attach_coverage(&root, &mut sources);
     let coverage = attach_specs(&root, &specs, &mut sources);
-    let model = build_model(&project, &specs, &sources, &coverage);
+    let git = load_git(&root, &specs, &sources);
+    let model = build_model(&project, &specs, &sources, &coverage, git.as_ref());
 
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&model)?);
@@ -241,6 +245,8 @@ fn parse_spec(root: &Path, path: &Path) -> Option<Spec> {
         .filter(|l| l.starts_with("## ") || l.starts_with("### "))
         .count();
 
+    let companions = find_companions(root, path);
+
     Some(Spec {
         module,
         status: if status.is_empty() {
@@ -252,9 +258,39 @@ fn parse_spec(root: &Path, path: &Path) -> Option<Spec> {
         owner,
         rel_path,
         files,
+        companions,
         sections,
         drift: None,
     })
+}
+
+/// The spec-sync companion doc set: standard sibling files that accompany a
+/// spec in its directory. Matched case-insensitively.
+const COMPANION_NAMES: &[&str] = &[
+    "requirements.md",
+    "tasks.md",
+    "context.md",
+    "testing.md",
+    "design.md",
+    "notes.md",
+];
+
+/// Companions are the standard spec-sync docs (requirements.md, tasks.md, …)
+/// that sit in the spec's own directory. Detecting by name works regardless of
+/// how many specs share the directory and never grabs unrelated markdown.
+fn find_companions(root: &Path, spec_path: &Path) -> Vec<String> {
+    let dir = match spec_path.parent() {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    let mut docs = Vec::new();
+    for name in COMPANION_NAMES {
+        let p = dir.join(name);
+        if p.exists() {
+            docs.push(rel(root, &p));
+        }
+    }
+    docs
 }
 
 fn split_frontmatter(text: &str) -> (&str, &str) {
@@ -428,6 +464,133 @@ fn attach_coverage(root: &Path, sources: &mut [Source]) {
 }
 
 // ---------------------------------------------------------------------------
+// Git update history
+// ---------------------------------------------------------------------------
+
+/// Update history mined from `git log`, when the project is a git repo.
+struct GitData {
+    /// Per spec index: (last commit unix ts, distinct commits touching its
+    /// footprint of spec doc + companions + governed files).
+    per_spec: Vec<(i64, usize)>,
+    /// Per source file rel path: last commit unix ts.
+    file_last: BTreeMap<String, i64>,
+    now: i64,
+    min_ts: i64,
+    max_ts: i64,
+}
+
+fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> {
+    // A spec's footprint: every path whose change counts as "this spec moved".
+    let mut footprint: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for s in sources {
+        for &i in &s.specs {
+            footprint.entry(s.rel_path.clone()).or_default().push(i);
+        }
+    }
+    for (i, spec) in specs.iter().enumerate() {
+        footprint.entry(spec.rel_path.clone()).or_default().push(i);
+        for c in &spec.companions {
+            footprint.entry(c.clone()).or_default().push(i);
+        }
+    }
+
+    let out = Command::new("git")
+        .args([
+            "-C",
+            &root.to_string_lossy(),
+            "log",
+            "--no-merges",
+            "--format=@ATLAS@%ct",
+            "--name-only",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    let mut per_spec = vec![(0i64, 0usize); specs.len()];
+    let mut file_last: BTreeMap<String, i64> = BTreeMap::new();
+    let mut head_ts = 0i64;
+    let mut cur_ts = 0i64;
+    let mut cur_specs: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    for line in text.lines() {
+        if let Some(ts) = line.strip_prefix("@ATLAS@") {
+            // Close out the commit we were reading: count it once per touched spec.
+            for &idx in &cur_specs {
+                per_spec[idx].1 += 1;
+            }
+            cur_specs.clear();
+            cur_ts = ts.trim().parse().unwrap_or(0);
+            if head_ts == 0 {
+                head_ts = cur_ts;
+            }
+        } else if !line.is_empty() {
+            let p = normalize(line);
+            // Log is newest-first, so the first time we see a path is its latest touch.
+            file_last.entry(p.clone()).or_insert(cur_ts);
+            if let Some(idxs) = footprint.get(&p) {
+                for &idx in idxs {
+                    if per_spec[idx].0 == 0 {
+                        per_spec[idx].0 = cur_ts;
+                    }
+                    cur_specs.insert(idx);
+                }
+            }
+        }
+    }
+    for &idx in &cur_specs {
+        per_spec[idx].1 += 1;
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(head_ts);
+
+    let tss: Vec<i64> = per_spec.iter().map(|p| p.0).filter(|&t| t > 0).collect();
+    let min_ts = tss.iter().copied().min().unwrap_or(0);
+    let max_ts = tss.iter().copied().max().unwrap_or(now);
+
+    Some(GitData {
+        per_spec,
+        file_last,
+        now,
+        min_ts,
+        max_ts,
+    })
+}
+
+/// A human relative-time string like "3d ago" or "2mo ago".
+fn ago(ts: i64, now: i64) -> String {
+    if ts <= 0 {
+        return "unknown".into();
+    }
+    let d = (now - ts).max(0);
+    if d < 3600 {
+        "just now".into()
+    } else if d < 86_400 {
+        format!("{}h ago", d / 3600)
+    } else if d < 30 * 86_400 {
+        format!("{}d ago", d / 86_400)
+    } else if d < 365 * 86_400 {
+        format!("{}mo ago", d / (30 * 86_400))
+    } else {
+        format!("{}y ago", d / (365 * 86_400))
+    }
+}
+
+/// Heat colour for a recency fraction `t` in 0..1 (1 = newest → hot).
+fn heat_color(t: f64) -> String {
+    let t = t.clamp(0.0, 1.0);
+    let hue = 210.0 - t * 192.0; // 210 (cold blue) → 18 (hot orange)
+    let sat = 25.0 + t * 55.0;
+    format!("hsl({hue:.0}, {sat:.0}%, 52%)")
+}
+
+// ---------------------------------------------------------------------------
 // Analysis
 // ---------------------------------------------------------------------------
 
@@ -532,6 +695,8 @@ struct Stats {
     coverage_pct: f64,
     /// Overall test line coverage, if an lcov report was found.
     test_coverage_pct: Option<f64>,
+    /// Whether git update history was available (enables the activity heat map).
+    has_history: bool,
 }
 
 #[derive(Serialize)]
@@ -549,8 +714,24 @@ struct SpecOut {
     share_pct: f64,
     /// Weighted test coverage over this spec's code files, if available.
     test_pct: Option<f64>,
+    /// Companion docs (requirements.md, tasks.md, …) alongside the spec.
+    companions: Vec<CompanionOut>,
+    /// Relative time since the spec (or its footprint) last changed, e.g. "3d ago".
+    updated: Option<String>,
+    /// Last-change unix timestamp of the spec's footprint (for sorting/heat).
+    updated_ts: Option<i64>,
+    /// Distinct commits that touched this spec's footprint.
+    commits: Option<usize>,
+    /// Recency 0..1 across the project's specs (1 = most recently changed).
+    heat: Option<f64>,
     drift: Option<String>,
     color: String,
+}
+
+#[derive(Serialize)]
+struct CompanionOut {
+    name: String,
+    updated: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -563,6 +744,8 @@ struct FileOut {
     overlap: bool,
     /// Test line coverage for this file (0-100), if available.
     test_pct: Option<f64>,
+    /// Last-change unix timestamp from git, if available.
+    updated_ts: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -571,9 +754,20 @@ struct PhantomOut {
     file: String,
 }
 
-fn build_model(project: &str, specs: &[Spec], sources: &[Source], cov: &Coverage) -> Model {
+fn build_model(
+    project: &str,
+    specs: &[Spec],
+    sources: &[Source],
+    cov: &Coverage,
+    git: Option<&GitData>,
+) -> Model {
     let total = cov.total_loc.max(1) as f64;
-    let spec_out = specs
+    // Recency span for the heat scale.
+    let (heat_min, heat_span) = match git {
+        Some(g) => (g.min_ts as f64, (g.max_ts - g.min_ts).max(1) as f64),
+        None => (0.0, 1.0),
+    };
+    let spec_out: Vec<SpecOut> = specs
         .iter()
         .enumerate()
         .map(|(i, s)| {
@@ -587,6 +781,31 @@ fn build_model(project: &str, specs: &[Spec], sources: &[Source], cov: &Coverage
                 }
             }
             let test_pct = (tot > 0).then(|| hit as f64 / tot as f64 * 100.0);
+
+            let (updated, updated_ts, commits, heat) = match git {
+                Some(g) => {
+                    let (ts, n) = g.per_spec.get(i).copied().unwrap_or((0, 0));
+                    if ts > 0 {
+                        let heat = ((ts as f64 - heat_min) / heat_span).clamp(0.0, 1.0);
+                        (Some(ago(ts, g.now)), Some(ts), Some(n), Some(heat))
+                    } else {
+                        (None, None, Some(n), None)
+                    }
+                }
+                None => (None, None, None, None),
+            };
+            let companions = s
+                .companions
+                .iter()
+                .map(|c| CompanionOut {
+                    name: c.rsplit('/').next().unwrap_or(c).to_string(),
+                    updated: git
+                        .and_then(|g| g.file_last.get(c).copied())
+                        .filter(|&t| t > 0)
+                        .map(|t| ago(t, git.map(|g| g.now).unwrap_or(t))),
+                })
+                .collect();
+
             SpecOut {
                 index: i,
                 module: s.module.clone(),
@@ -600,6 +819,11 @@ fn build_model(project: &str, specs: &[Spec], sources: &[Source], cov: &Coverage
                 sections: s.sections,
                 share_pct: loc as f64 / total * 100.0,
                 test_pct,
+                companions,
+                updated,
+                updated_ts,
+                commits,
+                heat,
                 drift: s.drift.clone(),
                 color: spec_color(i),
             }
@@ -627,6 +851,7 @@ fn build_model(project: &str, specs: &[Spec], sources: &[Source], cov: &Coverage
                 orphan: s.specs.is_empty(),
                 overlap: s.specs.len() > 1,
                 test_pct,
+                updated_ts: git.and_then(|g| g.file_last.get(&s.rel_path).copied()),
             }
         })
         .collect();
@@ -716,6 +941,7 @@ fn build_model(project: &str, specs: &[Spec], sources: &[Source], cov: &Coverage
             phantom_refs,
             coverage_pct,
             test_coverage_pct,
+            has_history: git.is_some(),
         },
         specs: spec_out,
         files: file_out,
@@ -931,6 +1157,33 @@ fn render_html(m: &Model) -> Result<String> {
     }
     h.push_str("</section>");
 
+    // ---- Spec activity heat map (git-driven) ----
+    if s.has_history && !m.specs.is_empty() {
+        let mut act: Vec<&SpecOut> = m.specs.iter().collect();
+        act.sort_by_key(|s| std::cmp::Reverse(s.updated_ts));
+        h.push_str("<section class=\"block\"><h2>Spec activity</h2>");
+        h.push_str("<p class=\"hint\">How recently each spec last changed (its doc, companions, or code), hottest first. Cold tiles are specs nothing has touched in a while — the most likely to be stale.</p>");
+        h.push_str("<div class=\"heatgrid\">");
+        for spec in &act {
+            let color = heat_color(spec.heat.unwrap_or(0.0));
+            let when = spec.updated.as_deref().unwrap_or("no history");
+            let commits = spec
+                .commits
+                .map(|c| format!("{c} commits"))
+                .unwrap_or_default();
+            h.push_str(&format!(
+                "<div class=\"tile\" style=\"border-left-color:{color};background:color-mix(in srgb,{color} 10%,var(--surface))\">\
+                 <span class=\"tname\">{}</span><span class=\"tmeta\">{} · {}</span></div>",
+                esc(&spec.module),
+                esc(when),
+                esc(&commits)
+            ));
+        }
+        h.push_str("</div>");
+        h.push_str("<p class=\"legend\"><span class=\"heatkey hot\"></span>recently changed &nbsp;·&nbsp; <span class=\"heatkey cold\"></span>stale</p>");
+        h.push_str("</section>");
+    }
+
     // ---- What needs a spec (the action list) ----
     if !orphans.is_empty() {
         h.push_str("<section class=\"block\"><h2>What needs a spec</h2>");
@@ -971,6 +1224,9 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("<label><input type=\"checkbox\" id=\"t-orphans\"> show files with no spec</label>");
     h.push_str("<label><input type=\"checkbox\" id=\"t-labels\"> file names</label>");
     h.push_str("<span class=\"cmode\">color: <button data-mode=\"spec\" class=\"on\">by spec</button><button data-mode=\"lang\">by language</button>");
+    if m.stats.has_history {
+        h.push_str("<button data-mode=\"age\">by recency</button>");
+    }
     if m.stats.test_coverage_pct.is_some() {
         h.push_str("<button data-mode=\"cov\">by test coverage</button>");
     }
@@ -1010,6 +1266,12 @@ fn render_html(m: &Model) -> Result<String> {
         if let Some(tc) = spec.test_pct {
             meta(&mut h, "test coverage", &format!("{tc:.0}%"));
         }
+        if let Some(u) = &spec.updated {
+            meta(&mut h, "updated", &esc(u));
+        }
+        if let Some(c) = spec.commits {
+            meta(&mut h, "commits", &c.to_string());
+        }
         if !spec.version.is_empty() {
             meta(&mut h, "version", &esc(&spec.version));
         }
@@ -1017,6 +1279,18 @@ fn render_html(m: &Model) -> Result<String> {
             meta(&mut h, "owner", &esc(&spec.owner));
         }
         h.push_str("</dl>");
+        if !spec.companions.is_empty() {
+            h.push_str("<div class=\"companions\"><span class=\"clabel\">companions</span>");
+            for c in &spec.companions {
+                let when = c.updated.as_deref().unwrap_or("");
+                h.push_str(&format!(
+                    "<span class=\"comp\">{}<em>{}</em></span>",
+                    esc(&c.name),
+                    esc(when)
+                ));
+            }
+            h.push_str("</div>");
+        }
         h.push_str(&format!("<p class=\"path\">{}</p>", esc(&spec.path)));
         h.push_str("</div>");
     }
