@@ -235,7 +235,7 @@
     const covOf = s => s.test_pct != null ? clamp(s.test_pct,0,100) : clamp(s.share_pct||0,0,100);
 
     const W = 1180, H = 620;
-    const px = 46, pxr = 20, pyt = 20, pyb = 46;
+    const px = 46, pxr = 30, pyt = 20, pyb = 46;
     const x0 = px, x1 = W - pxr, y0 = pyt, y1 = H - pyb;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
@@ -269,7 +269,10 @@
 
     const sx = v => x0 + clamp(v,0,1)*(x1-x0);
     const sy = v => y1 - clamp(v,0,100)/100*(y1-y0);
-    specs.forEach(s=>{
+    // Draw the busiest specs first so, when labels crowd, the ones worth reading
+    // (high churn) keep their label and the quiet cluster falls back to hover.
+    const placed = [];
+    specs.slice().sort((a,b)=>churnOf(b)-churnOf(a)).forEach(s=>{
       const cxp = sx(churnOf(s)), cyp = sy(covOf(s));
       const g = mk('g', 'qd-pt');
       const dot = mk('circle');
@@ -277,11 +280,20 @@
       dot.setAttribute('r', 6);
       dot.style.fill = s.color; dot.style.stroke = 'var(--bg)';
       g.appendChild(dot);
-      const t = mk('text', 'qd-dotlabel');
-      t.setAttribute('x', cxp + 9); t.setAttribute('y', cyp + 4);
-      t.textContent = s.module;
-      t.style.fill = s.color;
-      g.appendChild(t);
+      // Label sits right of the dot, but flips to the left near the right edge so
+      // it never spills past the plot. Skip a label that would stack on one
+      // already placed; the dot and its hover tooltip still carry the detail.
+      const nearRight = cxp > x1 - 90;
+      const lx = nearRight ? cxp - 9 : cxp + 9, ly = cyp + 4;
+      if(!placed.some(p => Math.abs(p.x - lx) < 46 && Math.abs(p.y - ly) < 12)){
+        const t = mk('text', 'qd-dotlabel');
+        t.setAttribute('x', lx); t.setAttribute('y', ly);
+        if(nearRight) t.setAttribute('text-anchor', 'end');
+        t.textContent = s.module;
+        t.style.fill = s.color;
+        g.appendChild(t);
+        placed.push({x: lx, y: ly});
+      }
       const churnTxt = commitsKnown ? ((s.commits!=null?s.commits:0) + ' commits') : (s.updated || 'unknown');
       const covTxt = s.test_pct != null ? Math.round(s.test_pct) + '% tested' : Math.round(s.share_pct||0) + '% of code';
       bindTip(host, tip, g, ()=>`<b>${esc(s.module)}</b><span class="sub">${churnTxt}</span><span class="sub">${covTxt}</span>`);
@@ -297,8 +309,12 @@
     const item = (color, label) =>
       `<span class="lg-item"><span class="lg-sw" style="background:${color}"></span>${esc(label)}</span>`;
     const parts = [];
-    if(hasCov) parts.push(item('var(--chart-4)', 'tested'), item('var(--bad)', 'untested'));
-    else parts.push(item(GOVERNED, 'has a spec'));
+    if(hasCov){
+      parts.push(item('var(--chart-4)', 'tested'), item('var(--bad)', 'untested'));
+      if(files.some(f=>!f.orphan && !f.overlap && f.test_pct==null)) parts.push(item(GOVERNED, 'spec, no test data'));
+    } else {
+      parts.push(item(GOVERNED, 'has a spec'));
+    }
     if(files.some(f=>f.overlap)) parts.push(item(SHARED, 'shared by 2+ specs'));
     if(files.some(f=>f.orphan)) parts.push(item(NOSPEC, 'no spec'));
     parts.push('<span class="lg-item lg-more">size = lines of code</span>');
