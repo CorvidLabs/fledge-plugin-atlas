@@ -48,6 +48,13 @@ The codebase treemap, coloured by governance (teal = has a spec, gray = none):
 
 ![Codebase treemap](docs/treemap.png)
 
+With [`augur`](https://github.com/CorvidLabs/augur) and
+[`attest`](https://github.com/CorvidLabs/attest) present, the trust panel fills
+in on its own: a change-risk verdict for the working tree, and the signed
+provenance of recent commits, read straight from git notes:
+
+![Trust and provenance](docs/trust.png)
+
 Regenerate any time with `fledge atlas --open`.
 
 ### 3md spec deck
