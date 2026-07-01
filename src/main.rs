@@ -140,7 +140,8 @@ fn run() -> Result<()> {
     attach_coverage(&root, &mut sources);
     let coverage = attach_specs(&root, &specs, &mut sources);
     let git = load_git(&root, &specs, &sources);
-    let model = build_model(&project, &specs, &sources, &coverage, git.as_ref());
+    let mut model = build_model(&project, &specs, &sources, &coverage, git.as_ref());
+    model.threemd = find_threemd(&root);
 
     if cli.review {
         let need: Vec<&SpecOut> = model.specs.iter().filter(|s| s.needs_review).collect();
@@ -275,7 +276,7 @@ fn render_3md(_root: &Path, _specs: &[Spec], sources: &[Source], model: &Model) 
         d.push_str(&format!("- **Test coverage:** {tc:.0}%\n"));
     }
     d.push_str(&format!(
-        "- **Specs:** {} &nbsp; **orphan files:** {} &nbsp; **overlap:** {} &nbsp; **broken refs:** {}\n",
+        "- **Specs:** {} · **orphan files:** {} · **overlap:** {} · **broken refs:** {}\n",
         s.specs, s.orphan_files, s.overlap_files, s.phantom_refs
     ));
 
@@ -306,10 +307,10 @@ fn render_3md(_root: &Path, _specs: &[Spec], sources: &[Source], model: &Model) 
         d.push_str(&format!("# {}\n\n", sp.module));
         let mut facts = format!("`{}`", sp.status);
         if !sp.version.is_empty() {
-            facts.push_str(&format!(" &nbsp; v{}", sp.version));
+            facts.push_str(&format!(" · v{}", sp.version));
         }
         if !sp.owner.is_empty() {
-            facts.push_str(&format!(" &nbsp; owner {}", sp.owner));
+            facts.push_str(&format!(" · owner {}", sp.owner));
         }
         d.push_str(&facts);
         d.push_str("\n\n");
@@ -1004,6 +1005,26 @@ struct Model {
     calendar: Option<Calendar>,
     /// The Corvid Pet: a gamified, stateless read on project health.
     pet: Pet,
+    /// `.3md` documents found in the project, parsed into planes so the atlas
+    /// can render them inline (and agents can read them).
+    #[serde(default)]
+    threemd: Vec<ThreeMdDoc>,
+}
+
+/// A parsed `.3md` document (Markdown with a Z axis) discovered in the project.
+#[derive(Serialize, Default)]
+struct ThreeMdDoc {
+    path: String,
+    title: String,
+    axis: String,
+    planes: Vec<ThreeMdPlane>,
+}
+
+#[derive(Serialize, Default)]
+struct ThreeMdPlane {
+    label: String,
+    z: String,
+    md: String,
 }
 
 #[derive(Serialize)]
@@ -1643,6 +1664,123 @@ fn build_model(
         phantoms,
         calendar,
         pet,
+        threemd: Vec::new(),
+    }
+}
+
+/// Discover and parse `.3md` documents in the project so the atlas can render
+/// them inline. Skips vendor/build trees and anything larger than 256 KB.
+fn find_threemd(root: &Path) -> Vec<ThreeMdDoc> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if path.is_dir() {
+                if !SKIP_DIRS.contains(&name.as_ref()) && !name.starts_with('.') {
+                    stack.push(path);
+                }
+            } else if name.ends_with(".3md") {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.len() > 256 * 1024 {
+                        continue;
+                    }
+                }
+                if let Ok(text) = fs::read_to_string(&path) {
+                    out.push(parse_threemd(&rel(root, &path), &text));
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// Minimal `.3md` parse: pull `title`/`axis` from the frontmatter and split the
+/// body into planes on `@plane` marker lines.
+fn parse_threemd(path: &str, text: &str) -> ThreeMdDoc {
+    let mut doc = ThreeMdDoc {
+        path: path.to_string(),
+        title: path.rsplit('/').next().unwrap_or(path).to_string(),
+        axis: String::new(),
+        planes: Vec::new(),
+    };
+    let mut lines = text.lines().peekable();
+    // frontmatter between the first pair of `---` fences
+    if lines.peek().map(|l| l.trim()) == Some("---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line.trim() == "---" {
+                break;
+            }
+            if let Some((k, v)) = line.split_once(':') {
+                match k.trim().to_lowercase().as_str() {
+                    "title" => doc.title = v.trim().trim_matches('"').to_string(),
+                    "axis" => doc.axis = v.trim().trim_matches('"').to_string(),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut cur: Option<ThreeMdPlane> = None;
+    let mut preamble = String::new();
+    for line in lines {
+        if let Some(rest) = line.trim_start().strip_prefix("@plane") {
+            if let Some(p) = cur.take() {
+                doc.planes.push(p);
+            }
+            let z = extract_kv(rest, "z=").unwrap_or_default();
+            let label = extract_label(rest).unwrap_or_else(|| format!("z={z}"));
+            cur = Some(ThreeMdPlane {
+                label,
+                z,
+                md: String::new(),
+            });
+        } else if let Some(p) = cur.as_mut() {
+            p.md.push_str(line);
+            p.md.push('\n');
+        } else {
+            preamble.push_str(line);
+            preamble.push('\n');
+        }
+    }
+    if let Some(p) = cur.take() {
+        doc.planes.push(p);
+    }
+    // If there was preamble before any plane, keep it as an intro plane.
+    if !preamble.trim().is_empty() {
+        doc.planes.insert(
+            0,
+            ThreeMdPlane {
+                label: "Intro".to_string(),
+                z: "-".to_string(),
+                md: preamble.trim().to_string(),
+            },
+        );
+    }
+    doc
+}
+
+fn extract_kv(s: &str, key: &str) -> Option<String> {
+    let i = s.find(key)? + key.len();
+    let rest = &s[i..];
+    let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+    Some(rest[..end].trim_matches('"').to_string())
+}
+
+fn extract_label(s: &str) -> Option<String> {
+    let i = s.find("label=")? + "label=".len();
+    let rest = &s[i..];
+    if let Some(stripped) = rest.strip_prefix('"') {
+        stripped.find('"').map(|end| stripped[..end].to_string())
+    } else {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        Some(rest[..end].to_string())
     }
 }
 
@@ -1826,6 +1964,9 @@ fn render_html(m: &Model) -> Result<String> {
     if !m.specs.is_empty() {
         comps.push(("c-specs", "specs"));
     }
+    if !m.threemd.is_empty() {
+        comps.push(("c-3md", "3md docs"));
+    }
     if !m.phantoms.is_empty() {
         comps.push(("c-phantoms", "broken refs"));
     }
@@ -1836,6 +1977,25 @@ fn render_html(m: &Model) -> Result<String> {
         ));
     }
     h.push_str("</nav>");
+
+    // ---- Call-to-action bar ----
+    let review_n = m.specs.iter().filter(|sp| sp.needs_review).count();
+    h.push_str("<div class=\"actions\">");
+    h.push_str("<button class=\"btn primary\" data-act=\"copy-json\">Copy model JSON</button>");
+    h.push_str("<button class=\"btn\" data-act=\"copy-verdict\">Copy verdict</button>");
+    if review_n > 0 {
+        h.push_str(&format!(
+            "<button class=\"btn\" data-act=\"copy-review\">Copy {review_n} specs to review</button>"
+        ));
+    }
+    if !orphans.is_empty() {
+        h.push_str("<button class=\"btn\" data-act=\"copy-orphans\">Copy orphan paths</button>");
+    }
+    if !m.threemd.is_empty() {
+        h.push_str("<button class=\"btn\" data-act=\"go-3md\">View 3md docs</button>");
+    }
+    h.push_str("<span class=\"actnote\" id=\"act-note\"></span>");
+    h.push_str("</div>");
 
     // ---- Plain-English verdict ----
     h.push_str("<section class=\"verdict comp\" id=\"c-verdict\">");
@@ -2093,6 +2253,34 @@ fn render_html(m: &Model) -> Result<String> {
     h.push_str("<div class=\"graph\"><svg id=\"graph-svg\" role=\"img\" aria-label=\"Spec and code relationship graph\"></svg><div id=\"tip\" class=\"tip\"></div></div>");
     h.push_str("</div></details>");
 
+    // ---- 3md documents (inline scrubber) ----
+    if !m.threemd.is_empty() {
+        h.push_str("<section class=\"block comp\" id=\"c-3md\"><h2>3md documents</h2>");
+        h.push_str(&format!(
+            "<p class=\"hint\">{} <code>.3md</code> document{} found in this project (Markdown with a Z axis). Scrub the planes below, or open one in the full 3md viewer. Generate a fresh spec deck any time with <code>fledge atlas --3md</code>.</p>",
+            m.threemd.len(),
+            if m.threemd.len() == 1 { "" } else { "s" }
+        ));
+        for (d, doc) in m.threemd.iter().enumerate() {
+            let n = doc.planes.len().max(1);
+            h.push_str(&format!("<div class=\"tmd\" data-doc=\"{d}\">"));
+            h.push_str(&format!(
+                "<div class=\"tmd-head\"><span class=\"tmd-title\">{}</span><span class=\"tmd-meta\">{} axis &nbsp;·&nbsp; {} planes &nbsp;·&nbsp; <code>{}</code></span><a class=\"btn\" href=\"https://corvidlabs.github.io/3md/viewer.html\" target=\"_blank\" rel=\"noopener\">open in 3md viewer ↗</a></div>",
+                esc(&doc.title),
+                esc(if doc.axis.is_empty() { "z" } else { &doc.axis }),
+                doc.planes.len(),
+                esc(&doc.path)
+            ));
+            h.push_str("<div class=\"tmd-stage\"><div class=\"tmd-plane\" data-plane></div></div>");
+            h.push_str(&format!(
+                "<div class=\"tmd-nav\"><button class=\"btn tmd-prev\" aria-label=\"Previous plane\">‹</button><span class=\"tmd-label\"></span><input type=\"range\" class=\"tmd-slider\" min=\"0\" max=\"{}\" value=\"0\" aria-label=\"Plane\"><button class=\"btn tmd-next\" aria-label=\"Next plane\">›</button></div>",
+                n - 1
+            ));
+            h.push_str("</div>");
+        }
+        h.push_str("</section>");
+    }
+
     // Spec cards
     if !m.specs.is_empty() {
         h.push_str("<section class=\"block comp\" id=\"c-specs\"><h2>Your specs</h2>");
@@ -2181,6 +2369,7 @@ fn render_html(m: &Model) -> Result<String> {
     ));
     h.push_str(GRAPH_JS);
     h.push_str(COMPONENTS_JS);
+    h.push_str(THREEMD_JS);
     h.push_str("</main></body></html>");
     Ok(h)
 }
@@ -2229,3 +2418,4 @@ fn meta(h: &mut String, key: &str, val: &str) {
 const STYLE: &str = include_str!("style.css");
 const GRAPH_JS: &str = include_str!("graph.js");
 const COMPONENTS_JS: &str = include_str!("components.js");
+const THREEMD_JS: &str = include_str!("threemd.js");
