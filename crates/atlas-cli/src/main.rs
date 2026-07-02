@@ -1710,8 +1710,18 @@ mod tests {
             html.contains("<style") && html.contains("<script"),
             "styles and scripts are inline"
         );
-        // Self-contained: no external stylesheet, script, or web font is fetched.
-        assert!(!html.contains("<link "), "no external <link>");
+        // Self-contained: no external stylesheet, script, or web font is
+        // fetched. The only <link> is the inline data: favicon, which fetches
+        // nothing.
+        assert!(
+            !html.contains("<link rel=\"stylesheet\""),
+            "no external stylesheet"
+        );
+        assert_eq!(
+            html.matches("<link ").count(),
+            html.matches("<link rel=\"icon\" href=\"data:").count(),
+            "every <link> is an inline data: icon, none external"
+        );
         assert!(!html.contains("<script src="), "no external <script src>");
         assert!(!html.contains("@font-face"), "no web-font fetch");
         let _ = fs::remove_dir_all(&root);
