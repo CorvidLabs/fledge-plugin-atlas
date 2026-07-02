@@ -36,6 +36,8 @@
 }
 
 * { box-sizing: border-box; }
+/* The hidden attribute must win over any class that sets display (e.g. flex). */
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
@@ -171,6 +173,8 @@ h1 { font-size: 46px; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 22p
   padding: 10px 14px; border-left: 3px solid color-mix(in srgb, var(--chart-3) 60%, var(--line));
   background: color-mix(in srgb, var(--chart-3) 6%, var(--surface)); border-radius: 0 8px 8px 0; max-width: 90ch;
 }
+.history-load { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+.history-load .note { margin: 0; }
 .atlas-frame {
   width: 100%; height: 82vh; min-height: 620px; border: 1px solid var(--line);
   border-radius: 14px; background: var(--bg);

@@ -1,6 +1,6 @@
 ---
 module: webapp
-version: 2
+version: 3
 status: active
 files:
   - web/app/app.js
@@ -46,6 +46,21 @@ When a large repo exceeds the 60-per-hour anonymous budget
 Then the app shows the limit and its reset time and suggests adding a token.
 ```
 
+```
+Given an anonymous visitor rendering a repo
+When the atlas first appears
+Then git history is not fetched (saving one API call per commit); a "Load git
+     history" control fetches it on demand and redraws the time-based views.
+```
+
+```
+Given a repo rendered once already in this browser
+When it is opened again and its files are unchanged
+Then metadata and tree revalidate with ETags (304, no quota), blobs and commit
+     details come from the by-sha cache, and the atlas reappears spending no
+     billable API calls.
+```
+
 ## Invariants
 
 1. No backend and no sign-in: every request goes straight from the browser to
@@ -56,9 +71,13 @@ Then the app shows the limit and its reset time and suggests adding a token.
 3. Code-file classification mirrors the engine's `CODE_EXTS`, so the browser and
    the CLI recognize the same source set.
 4. Fetch cost is bounded to fit the active rate limit: anonymous runs use a
-   smaller history window and code-file cap than token runs, and the caps that
-   were applied are surfaced in the UI.
-5. Failures degrade visibly: rate limits show the reset time, empty and private
+   smaller history window and code-file cap than token runs, git history is
+   opt-in, and the caps that were applied are surfaced in the UI.
+5. Repeat requests are cheap: responses are revalidated with ETags (a 304 does
+   not count against the limit) and sha-addressed content (blobs, single
+   commits) is served from an IndexedDB cache without a network request. A repo
+   whose tree sha is unchanged reopens from cache.
+6. Failures degrade visibly: rate limits show the reset time, empty and private
    repos and oversized or truncated trees each show a clear message, not a crash.
 
 ## Error Cases
@@ -82,3 +101,4 @@ Then the app shows the limit and its reset time and suggests adding a token.
 |---------|------|---------|
 | 1 | 2026-07-01 | Initial spec |
 | 2 | 2026-07-01 | Dropped the OAuth worker and config.js; render public repos anonymously with an optional token. |
+| 3 | 2026-07-02 | Git history is opt-in; ETag/304 and sha-addressed IndexedDB caching so revisits spend no billable calls. |

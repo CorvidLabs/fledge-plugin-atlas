@@ -2403,6 +2403,9 @@ pub fn render_html(m: &Model) -> Result<String> {
     let mut h = String::with_capacity(96 * 1024);
     h.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     h.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    // Self-contained brand favicon so a standalone atlas (or the sandboxed
+    // iframe embedding it) never triggers an implicit /favicon.ico request.
+    h.push_str("<link rel=\"icon\" href=\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMwZTZmNjYiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjMyIiByPSIxOCIgZmlsbD0iI2ZhZjlmNiIvPjxwYXRoIGQ9Ik0zMyAyMS41TDU4LjUgMjkuNUwzMyAzOS41WiIgZmlsbD0iI2ZhZjlmNiIvPjxjaXJjbGUgY3g9IjI3LjUiIGN5PSIyNiIgcj0iMy40IiBmaWxsPSIjMGU2ZjY2Ii8+PC9zdmc+\">");
     h.push_str(&format!("<title>{} · atlas</title>", esc(&m.project)));
     h.push_str(STYLE);
     h.push_str("</head><body><main class=\"wrap\">");

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Atlas - any GitHub repo as an interactive map</title>
 <meta name="description" content="Render any public GitHub repository as an interactive HTML atlas: spec coverage, code graph, dependency DAG, and history. Runs entirely in your browser, no sign-in.">
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMwZTZmNjYiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjMyIiByPSIxOCIgZmlsbD0iI2ZhZjlmNiIvPjxwYXRoIGQ9Ik0zMyAyMS41TDU4LjUgMjkuNUwzMyAzOS41WiIgZmlsbD0iI2ZhZjlmNiIvPjxjaXJjbGUgY3g9IjI3LjUiIGN5PSIyNiIgcj0iMy40IiBmaWxsPSIjMGU2ZjY2Ii8+PC9zdmc+">
 <link rel="stylesheet" href="./app.css">
 </head>
 <body>
@@ -90,6 +91,10 @@
       </div>
     </div>
     <p id="history-note" class="history-note" hidden></p>
+    <div id="history-load" class="history-load" hidden>
+      <button id="load-history" class="btn" type="button">Load git history</button>
+      <span id="history-load-note" class="note"></span>
+    </div>
     <iframe id="atlas-frame" class="atlas-frame" title="Rendered atlas"
             sandbox="allow-scripts allow-popups allow-downloads"
             referrerpolicy="no-referrer"></iframe>
