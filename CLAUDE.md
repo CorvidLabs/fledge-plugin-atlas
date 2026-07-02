@@ -6,9 +6,20 @@ single self-contained HTML atlas (interactive spec/code graph) and, with
 
 ## Layout
 
-- `src/main.rs` — everything: spec parsing, source walk, analysis, model, HTML.
-- `src/style.css` — the atlas stylesheet, embedded via `include_str!`.
-- `src/graph.js` — the vanilla-JS force-directed graph, embedded via `include_str!`.
+A Cargo workspace. The engine is pure so it also runs in the browser via WASM.
+
+- `crates/atlas-core` (lib `atlas_core`) — the pure engine: all data types, spec
+  parsing (`parse_spec_str`), source→spec mapping (`attach_specs`), lcov parsing
+  (`attach_coverage_str`), `build_model`, and `render_html(&Model)`. No `std::fs`,
+  `std::process`, `std::net`, or `Command`; builds for `wasm32-unknown-unknown`.
+- `crates/atlas-core/src/*.css`,`*.js` — the atlas stylesheet and vanilla-JS
+  visualizations, embedded into the engine via `include_str!`.
+- `crates/atlas-cli` (bin `fledge-atlas`) — the CLI: filesystem walks, git mining,
+  clap, `main`/`run`, and every `--flag` emitter. Does all IO, then calls the core.
+- `crates/atlas-wasm` (lib, cdylib) — wasm-bindgen shim exposing `render(json)`
+  for the web app. Excluded from the default host build; built with wasm-pack.
+- `web/` — the GitHub Pages app (`web/app`) and the OAuth token worker
+  (`web/auth-worker`).
 - `plugin.toml` — declares the `atlas` command (binary `target/release/fledge-atlas`).
 
 ## Pipeline (one model, two outputs)

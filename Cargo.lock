@@ -59,6 +59,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "atlas-core"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -109,8 +118,8 @@ name = "fledge-plugin-atlas"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "atlas-core",
  "clap",
- "serde",
  "serde_json",
 ]
 

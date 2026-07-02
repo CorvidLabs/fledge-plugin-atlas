@@ -1,0 +1,18 @@
+[package]
+name = "atlas-core"
+version = "0.1.5"
+edition = "2021"
+rust-version = "1.89"
+description = "Pure engine behind fledge atlas: the spec/code model and its self-contained HTML render. No IO; compiles to WASM."
+license = "MIT"
+authors = ["0xLeif"]
+repository = "https://github.com/CorvidLabs/fledge-plugin-atlas"
+
+[lib]
+name = "atlas_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
