@@ -1,8 +1,9 @@
 name: Deploy atlas web app
 
-# Builds the WASM engine and publishes web/app to GitHub Pages. Enable Pages for
-# the repo (Settings -> Pages -> Source: GitHub Actions) once, then every push to
-# main that touches the engine or the app redeploys.
+# Builds the WASM engine and publishes web/app to GitHub Pages, and alongside it
+# renders this repo's own atlas as badges + SVG components under /badges. Enable
+# Pages for the repo (Settings -> Pages -> Source: GitHub Actions) once, then
+# every push to main that touches the engine, the app, or the specs redeploys.
 
 on:
   push:
@@ -10,6 +11,7 @@ on:
     paths:
       - "crates/**"
       - "web/app/**"
+      - "specs/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/pages.yml"
@@ -30,17 +32,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
-
       - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            target
             crates/atlas-wasm/target
-          key: wasm-${{ runner.os }}-${{ hashFiles('crates/atlas-wasm/Cargo.lock', 'crates/atlas-core/**/*.rs') }}
+          key: pages-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'crates/atlas-core/**/*.rs') }}
+
+      - name: Build atlas CLI
+        run: cargo build --release --locked --bin fledge-atlas
+
+      # Map the repo BEFORE the WASM pkg is built. web/app/pkg does not exist yet,
+      # so the generated bundle never counts as orphan code and the atlas governs
+      # itself at 100%: the badges below reflect the committed source, not the build.
+      - name: Render self-atlas badges and components
+        env:
+          ATLAS_JSON: ${{ runner.temp }}/atlas.json
+          OUT_DIR: web/app/badges
+        run: |
+          mkdir -p "$OUT_DIR"
+          ./target/release/fledge-atlas . --json > "$ATLAS_JSON"
+          for c in coverage langmix treemap; do
+            ./target/release/fledge-atlas . --svg "$c" > "$OUT_DIR/$c.svg"
+          done
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync(process.env.ATLAS_JSON, "utf8"));
+            const s = m.stats;
+            const out = process.env.OUT_DIR;
+            const teal = "0e6f66", gold = "b07a1e", clay = "a0492e";
+            const blue = "1e6fa8", gray = "5f6672", ink = "15181b";
+            const band = p => (p >= 90 ? teal : p >= 60 ? gold : clay);
+            const badge = (name, label, message, color) =>
+              fs.writeFileSync(`${out}/${name}.json`,
+                JSON.stringify({ schemaVersion: 1, label, message, color, labelColor: ink }));
+            const pct = Math.round(s.coverage_pct);
+            badge("coverage", "spec coverage", `${pct}%`, band(s.coverage_pct));
+            badge("orphans", "orphans", String(s.orphan_files), s.orphan_files ? clay : teal);
+            badge("phantoms", "phantoms", String(s.phantom_refs), s.phantom_refs ? clay : teal);
+            badge("specs", "specs", String(s.specs), blue);
+            badge("loc", "lines of code", s.total_loc.toLocaleString("en-US"), gray);
+            console.log(`badges: ${pct}% coverage, ${s.orphan_files} orphans, ${s.phantom_refs} phantoms, ${s.specs} specs`);
+          '
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh

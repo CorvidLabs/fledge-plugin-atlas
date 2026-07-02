@@ -26,9 +26,9 @@ use clap::Parser;
 use atlas_core::{
     attach_coverage_str, attach_specs, build_git_data, build_model, civil_from_days, commas,
     days_from_civil, fmt_date, lang_for, looks_generated, normalize, parse_spec_str, parse_threemd,
-    render_html, scaffold_spec, weekday, AttestSummary, Attestation, AugurSummary, CommitInput,
-    FileOut, GitData, Model, Source, Spec, SpecOut, ThreeMdDoc, Trust, CODE_EXTS, COMPANION_NAMES,
-    SKIP_DIRS,
+    render_html, render_svg, scaffold_spec, weekday, AttestSummary, Attestation, AugurSummary,
+    CommitInput, FileOut, GitData, Model, Source, Spec, SpecOut, ThreeMdDoc, Trust, CODE_EXTS,
+    COMPANION_NAMES, SKIP_DIRS,
 };
 
 #[derive(Parser)]
@@ -50,6 +50,11 @@ struct Cli {
     /// Print the model as JSON to stdout instead of writing HTML. For agents.
     #[arg(long)]
     json: bool,
+
+    /// Print one atlas component as a standalone SVG to stdout, for embedding in
+    /// a README or job summary. One of: coverage, langmix, treemap.
+    #[arg(long, value_name = "COMPONENT")]
+    svg: Option<String>,
 
     /// Print (as JSON) the specs that likely need review — code changed after
     /// the spec, spec-sync drift, or broken references. For agents.
@@ -155,6 +160,10 @@ fn run() -> Result<()> {
     }
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&model)?);
+        return Ok(());
+    }
+    if let Some(component) = &cli.svg {
+        print!("{}", render_svg(&model, component)?);
         return Ok(());
     }
     if cli.three_md {

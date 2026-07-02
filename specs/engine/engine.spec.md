@@ -1,6 +1,6 @@
 ---
 module: engine
-version: 2
+version: 3
 status: active
 files:
   - crates/atlas-core/src/lib.rs
@@ -55,6 +55,7 @@ The public contract is the CLI, plus the pure pipeline functions and types in
 | `path` (positional) | directory, default `.` | Project root to analyze; must resolve to a directory. |
 | `-o`, `--out` | file path | Output file; defaults to `<project>.atlas.html` (or `.3md`) in the current working directory. |
 | `--json` | none | Print the whole `Model` as pretty JSON to stdout instead of writing HTML. For agents. |
+| `--svg` | `<COMPONENT>` | Print one component as a standalone SVG to stdout, for embedding in a README or job summary. One of `coverage`, `langmix`, `treemap`; an unknown name errors and lists the valid ones. |
 | `--review` | none | Print only the specs whose `needs_review` is true, as JSON. |
 | `--spec` | `<MODULE>` | Print one spec's full detail: its `SpecOut`, the spec doc text, companion text, and governed files. |
 | `--owns` | `<PATH>` | Reverse index: which specs govern a file, plus its orphan/overlap/coverage facts. Matches exact path, then suffix, then basename. |
@@ -80,6 +81,7 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 | `build_git_data` | core | `fn(&[CommitInput], &[Spec], &[Source], i64) -> GitData` | Fold a newest-first commit list into update history. The CLI mines the commits from `git log`; the web app from the GitHub API. |
 | `build_model` | core | `fn(&str, &[Spec], &[Source], &Coverage, Option<&GitData>) -> Model` | Fold specs, sources, coverage, and git history into the single serializable `Model`. |
 | `render_html` | core | `fn(&Model) -> Result<String>` | Render the self-contained HTML atlas, embedding the same `Model` JSON that `--json` prints. |
+| `render_svg` | core | `fn(&Model, &str) -> Result<String>` | Render one component (`coverage`, `langmix`, or `treemap`, listed in `SVG_COMPONENTS`) as a standalone, self-contained SVG string. Deterministic and browser-free (no force layout), so a given `Model` always yields byte-stable SVG. Unknown names error. |
 
 ### Key Types
 
@@ -171,6 +173,14 @@ Then it prints {"note": "no lcov coverage found", "gaps": []} and exits 0,
      because test coverage is an optional overlay, never a requirement.
 ```
 
+```
+Given any analyzable repo
+When `fledge-atlas --svg treemap .` runs
+Then it prints a single self-contained <svg> (no external CSS, fonts, or
+     scripts) to stdout, with one tile per code file sized by LOC and colored
+     by governance, and running it again on the same state prints identical bytes.
+```
+
 ## Error Cases
 
 | Error | When | Behavior |
@@ -185,6 +195,7 @@ Then it prints {"note": "no lcov coverage found", "gaps": []} and exits 0,
 | Unknown git ref (`--since`) | ref invalid inside a real git repo | `anyhow::bail!("unknown git ref '<ref>'")`, exit 1, so an agent never reads empty as "nothing changed". |
 | `--since` outside git | not a work tree | Degrades to an empty changed-files worklist, no error. |
 | `--spec <unknown>` | module name not found | Err listing the known module names. |
+| `--svg <unknown>` | component name not in `SVG_COMPONENTS` | `anyhow::bail!` listing the valid component names, exit 1. |
 | `--scaffold` with no orphans | every file already under a spec | Prints a note to stderr and exits 0; nothing to scaffold. |
 | Ambiguous `--owns` basename | many files share the basename, query not exact | Returns the first match plus a `matches` list of every candidate. |
 | `fledge spec check` / `augur` / `attest` absent or slow | drift and trust enrichment | Best-effort: skipped on error or timeout, leaving no drift or trust panel. |
@@ -212,3 +223,4 @@ Then it prints {"note": "no lcov coverage found", "gaps": []} and exits 0,
 |---------|------|---------|
 | 1 | 2026-07-01 | Initial spec |
 | 2 | 2026-07-01 | Split into the `atlas-core` (pure) and `atlas-cli` (IO) workspace crates; updated the pipeline signatures (`render_html(&Model)`, `attach_specs` with `existing_paths`, `attach_coverage_str`, `parse_spec_str`, `build_git_data`). |
+| 3 | 2026-07-02 | Added `render_svg(&Model, component)` and the `--svg` flag: standalone, deterministic SVG for the `coverage`, `langmix`, and `treemap` components, for embedding as living README images and via the composite GitHub Action. |
