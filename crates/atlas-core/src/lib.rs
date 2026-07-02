@@ -359,6 +359,102 @@ pub struct GitData {
     pub max_ts: i64,
 }
 
+/// One commit's contribution to the update history: its unix timestamp and the
+/// project-relative paths it changed. Commits must be newest-first (as `git log`
+/// emits them), so the first time a path is seen is its latest touch.
+pub struct CommitInput {
+    pub ts: i64,
+    pub files: Vec<String>,
+}
+
+/// Build [`GitData`] from a newest-first commit list, independent of where the
+/// commits came from: the CLI mines them from `git log`, the web app rebuilds
+/// them from the GitHub API. `now` is the current unix time used for recency, so
+/// this stays pure — no clock, no IO. The accumulation mirrors what `git log
+/// --name-only` scanning did inline, so both callers agree byte for byte.
+pub fn build_git_data(
+    commits: &[CommitInput],
+    specs: &[Spec],
+    sources: &[Source],
+    now: i64,
+) -> GitData {
+    // A spec's footprint: every path whose change counts as "this spec moved".
+    let mut footprint: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    // Sets to classify a commit as a spec update, a code update, or both.
+    let mut spec_doc_set: HashSet<String> = HashSet::new();
+    let mut code_set: HashSet<String> = HashSet::new();
+    for s in sources {
+        code_set.insert(s.rel_path.clone());
+        for &i in &s.specs {
+            footprint.entry(s.rel_path.clone()).or_default().push(i);
+        }
+    }
+    for (i, spec) in specs.iter().enumerate() {
+        footprint.entry(spec.rel_path.clone()).or_default().push(i);
+        spec_doc_set.insert(spec.rel_path.clone());
+        for c in &spec.companions {
+            footprint.entry(c.clone()).or_default().push(i);
+            spec_doc_set.insert(c.clone());
+        }
+    }
+
+    let mut per_spec = vec![(0i64, 0usize); specs.len()];
+    let mut file_last: BTreeMap<String, i64> = BTreeMap::new();
+    let mut days: BTreeMap<i64, (usize, usize)> = BTreeMap::new();
+
+    for commit in commits {
+        let cur_ts = commit.ts;
+        let mut cur_specs: HashSet<usize> = HashSet::new();
+        let mut touched_spec = false;
+        let mut touched_code = false;
+        for f in &commit.files {
+            let p = normalize(f);
+            // Newest-first, so the first time we see a path is its latest touch.
+            file_last.entry(p.clone()).or_insert(cur_ts);
+            if spec_doc_set.contains(&p) {
+                touched_spec = true;
+            }
+            if code_set.contains(&p) {
+                touched_code = true;
+            }
+            if let Some(idxs) = footprint.get(&p) {
+                for &idx in idxs {
+                    if per_spec[idx].0 == 0 {
+                        per_spec[idx].0 = cur_ts;
+                    }
+                    cur_specs.insert(idx);
+                }
+            }
+        }
+        for &idx in &cur_specs {
+            per_spec[idx].1 += 1;
+        }
+        if (touched_spec || touched_code) && cur_ts > 0 {
+            let day = cur_ts / 86_400;
+            let e = days.entry(day).or_insert((0, 0));
+            if touched_spec {
+                e.0 += 1;
+            }
+            if touched_code {
+                e.1 += 1;
+            }
+        }
+    }
+
+    let tss: Vec<i64> = per_spec.iter().map(|p| p.0).filter(|&t| t > 0).collect();
+    let min_ts = tss.iter().copied().min().unwrap_or(0);
+    let max_ts = tss.iter().copied().max().unwrap_or(now);
+
+    GitData {
+        per_spec,
+        file_last,
+        days,
+        now,
+        min_ts,
+        max_ts,
+    }
+}
+
 /// Gregorian (year, month, day) from a unix day-number, via Howard Hinnant's
 /// civil-from-days algorithm. Used to place calendar cells and label months.
 pub fn civil_from_days(z: i64) -> (i64, u32, u32) {

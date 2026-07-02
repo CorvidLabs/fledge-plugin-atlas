@@ -24,10 +24,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use atlas_core::{
-    attach_coverage_str, attach_specs, build_model, civil_from_days, commas, days_from_civil,
-    fmt_date, lang_for, looks_generated, normalize, parse_spec_str, parse_threemd, render_html,
-    scaffold_spec, weekday, AttestSummary, Attestation, AugurSummary, FileOut, GitData, Model,
-    Source, Spec, SpecOut, ThreeMdDoc, Trust, CODE_EXTS, COMPANION_NAMES, SKIP_DIRS,
+    attach_coverage_str, attach_specs, build_git_data, build_model, civil_from_days, commas,
+    days_from_civil, fmt_date, lang_for, looks_generated, normalize, parse_spec_str, parse_threemd,
+    render_html, scaffold_spec, weekday, AttestSummary, Attestation, AugurSummary, CommitInput,
+    FileOut, GitData, Model, Source, Spec, SpecOut, ThreeMdDoc, Trust, CODE_EXTS, COMPANION_NAMES,
+    SKIP_DIRS,
 };
 
 #[derive(Parser)]
@@ -1137,26 +1138,6 @@ fn attach_coverage(root: &Path, sources: &mut [Source]) {
 }
 
 fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> {
-    // A spec's footprint: every path whose change counts as "this spec moved".
-    let mut footprint: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    // Sets to classify a commit as a spec update, a code update, or both.
-    let mut spec_doc_set: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut code_set: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for s in sources {
-        code_set.insert(s.rel_path.clone());
-        for &i in &s.specs {
-            footprint.entry(s.rel_path.clone()).or_default().push(i);
-        }
-    }
-    for (i, spec) in specs.iter().enumerate() {
-        footprint.entry(spec.rel_path.clone()).or_default().push(i);
-        spec_doc_set.insert(spec.rel_path.clone());
-        for c in &spec.companions {
-            footprint.entry(c.clone()).or_default().push(i);
-            spec_doc_set.insert(c.clone());
-        }
-    }
-
     let out = Command::new("git")
         .args([
             "-C",
@@ -1173,89 +1154,38 @@ fn load_git(root: &Path, specs: &[Spec], sources: &[Source]) -> Option<GitData> 
     }
     let text = String::from_utf8_lossy(&out.stdout);
 
-    let mut per_spec = vec![(0i64, 0usize); specs.len()];
-    let mut file_last: BTreeMap<String, i64> = BTreeMap::new();
-    let mut days: BTreeMap<i64, (usize, usize)> = BTreeMap::new();
-    let mut head_ts = 0i64;
-    let mut cur_ts = 0i64;
-    let mut cur_specs: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut touched_spec = false;
-    let mut touched_code = false;
-
+    // Parse the log into newest-first commits, then let the pure engine do the
+    // accumulation, so the CLI and the WASM/GitHub path build GitData the same way.
+    let mut commits: Vec<CommitInput> = Vec::new();
+    let mut cur: Option<CommitInput> = None;
     for line in text.lines() {
         if let Some(ts) = line.strip_prefix("@ATLAS@") {
-            // Close out the commit we were reading.
-            for &idx in &cur_specs {
-                per_spec[idx].1 += 1;
+            if let Some(c) = cur.take() {
+                commits.push(c);
             }
-            if (touched_spec || touched_code) && cur_ts > 0 {
-                let day = cur_ts / 86_400;
-                let e = days.entry(day).or_insert((0, 0));
-                if touched_spec {
-                    e.0 += 1;
-                }
-                if touched_code {
-                    e.1 += 1;
-                }
-            }
-            cur_specs.clear();
-            touched_spec = false;
-            touched_code = false;
-            cur_ts = ts.trim().parse().unwrap_or(0);
-            if head_ts == 0 {
-                head_ts = cur_ts;
-            }
+            cur = Some(CommitInput {
+                ts: ts.trim().parse().unwrap_or(0),
+                files: Vec::new(),
+            });
         } else if !line.is_empty() {
-            let p = normalize(line);
-            // Log is newest-first, so the first time we see a path is its latest touch.
-            file_last.entry(p.clone()).or_insert(cur_ts);
-            if spec_doc_set.contains(&p) {
-                touched_spec = true;
-            }
-            if code_set.contains(&p) {
-                touched_code = true;
-            }
-            if let Some(idxs) = footprint.get(&p) {
-                for &idx in idxs {
-                    if per_spec[idx].0 == 0 {
-                        per_spec[idx].0 = cur_ts;
-                    }
-                    cur_specs.insert(idx);
-                }
+            if let Some(c) = cur.as_mut() {
+                c.files.push(line.to_string());
             }
         }
     }
-    for &idx in &cur_specs {
-        per_spec[idx].1 += 1;
-    }
-    if (touched_spec || touched_code) && cur_ts > 0 {
-        let day = cur_ts / 86_400;
-        let e = days.entry(day).or_insert((0, 0));
-        if touched_spec {
-            e.0 += 1;
-        }
-        if touched_code {
-            e.1 += 1;
-        }
+    if let Some(c) = cur.take() {
+        commits.push(c);
     }
 
+    // Newest commit is the head; use its timestamp as a fallback if the system
+    // clock is somehow unavailable (matches the previous behavior).
+    let head_ts = commits.first().map(|c| c.ts).unwrap_or(0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(head_ts);
 
-    let tss: Vec<i64> = per_spec.iter().map(|p| p.0).filter(|&t| t > 0).collect();
-    let min_ts = tss.iter().copied().min().unwrap_or(0);
-    let max_ts = tss.iter().copied().max().unwrap_or(now);
-
-    Some(GitData {
-        per_spec,
-        file_last,
-        days,
-        now,
-        min_ts,
-        max_ts,
-    })
+    Some(build_git_data(&commits, specs, sources, now))
 }
 
 /// `--scaffold`: print a `*.spec.md` skeleton for the top-ranked orphan cluster
