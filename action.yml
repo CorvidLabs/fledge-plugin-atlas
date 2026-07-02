@@ -1,0 +1,91 @@
+name: "Atlas report"
+description: "Render a repo's spec coverage as badges and standalone SVG components, and expose the numbers as outputs."
+author: "CorvidLabs"
+branding:
+  icon: "map"
+  color: "green"
+
+inputs:
+  path:
+    description: "Project root to analyze."
+    required: false
+    default: "."
+  output-dir:
+    description: "Directory to write atlas.json, the shields endpoint badges, and the SVG components into."
+    required: false
+    default: "atlas"
+  components:
+    description: "Space-separated SVG components to render. Any of: coverage, langmix, treemap."
+    required: false
+    default: "coverage langmix treemap"
+  version:
+    description: "git ref (tag or branch) of fledge-plugin-atlas to install the CLI from."
+    required: false
+    default: "main"
+
+outputs:
+  coverage:
+    description: "Spec coverage as a whole-number percentage."
+    value: ${{ steps.render.outputs.coverage }}
+  orphans:
+    description: "Number of source files governed by no spec."
+    value: ${{ steps.render.outputs.orphans }}
+  phantoms:
+    description: "Number of spec-declared paths that do not exist on disk."
+    value: ${{ steps.render.outputs.phantoms }}
+  specs:
+    description: "Number of specs found."
+    value: ${{ steps.render.outputs.specs }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install fledge-atlas
+      shell: bash
+      env:
+        REF: ${{ inputs.version }}
+      run: |
+        repo=https://github.com/CorvidLabs/fledge-plugin-atlas
+        install() { cargo install --locked --git "$repo" --bin fledge-atlas "$@" fledge-plugin-atlas; }
+        # A ref may be a tag or a branch; try tag first, then branch.
+        install --tag "$REF" || install --branch "$REF"
+
+    - name: Render atlas
+      id: render
+      shell: bash
+      env:
+        ATLAS_PATH: ${{ inputs.path }}
+        OUT_DIR: ${{ inputs.output-dir }}
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        mkdir -p "$OUT_DIR"
+        fledge-atlas "$ATLAS_PATH" --json > "$OUT_DIR/atlas.json"
+        for c in $COMPONENTS; do
+          fledge-atlas "$ATLAS_PATH" --svg "$c" > "$OUT_DIR/$c.svg"
+        done
+        node -e '
+          const fs = require("fs");
+          const out = process.env.OUT_DIR;
+          const m = JSON.parse(fs.readFileSync(`${out}/atlas.json`, "utf8"));
+          const s = m.stats;
+          const teal = "0e6f66", gold = "b07a1e", clay = "a0492e";
+          const blue = "1e6fa8", gray = "5f6672", ink = "15181b";
+          const band = p => (p >= 90 ? teal : p >= 60 ? gold : clay);
+          const badge = (name, label, message, color) =>
+            fs.writeFileSync(`${out}/${name}.json`,
+              JSON.stringify({ schemaVersion: 1, label, message, color, labelColor: ink }));
+          const pct = Math.round(s.coverage_pct);
+          badge("coverage", "spec coverage", `${pct}%`, band(s.coverage_pct));
+          badge("orphans", "orphans", String(s.orphan_files), s.orphan_files ? clay : teal);
+          badge("phantoms", "phantoms", String(s.phantom_refs), s.phantom_refs ? clay : teal);
+          badge("specs", "specs", String(s.specs), blue);
+          badge("loc", "lines of code", s.total_loc.toLocaleString("en-US"), gray);
+          const gh = process.env.GITHUB_OUTPUT;
+          if (gh) fs.appendFileSync(gh,
+            `coverage=${pct}\norphans=${s.orphan_files}\nphantoms=${s.phantom_refs}\nspecs=${s.specs}\n`);
+          const sm = process.env.GITHUB_STEP_SUMMARY;
+          if (sm) fs.appendFileSync(sm,
+            `### Atlas\n\n${m.verdict}\n\n| coverage | orphans | phantoms | specs |\n|---|---|---|---|\n` +
+            `| ${pct}% | ${s.orphan_files} | ${s.phantom_refs} | ${s.specs} |\n`);
+          console.log(`atlas: ${pct}% coverage, ${s.orphan_files} orphans, ${s.phantom_refs} phantoms, ${s.specs} specs`);
+        '

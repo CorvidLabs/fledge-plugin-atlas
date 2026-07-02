@@ -5,6 +5,8 @@
 crates/atlas-wasm/target/
 # wasm-pack output for the web app (built in CI / locally via `fledge build web`).
 web/app/pkg/
+# self-atlas badges + SVG components, rendered into the Pages artifact in CI.
+web/app/badges/
 
 # OS
 .DS_Store

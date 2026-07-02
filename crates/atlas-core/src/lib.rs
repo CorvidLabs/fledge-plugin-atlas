@@ -3388,6 +3388,382 @@ const COMPONENTS_JS: &str = include_str!("components.js");
 const THREEMD_JS: &str = include_str!("threemd.js");
 const SINCE_JS: &str = include_str!("since.js");
 
+// ---- standalone SVG components -------------------------------------------
+//
+// The same model that drives the interactive HTML can also be emitted as small,
+// self-contained SVG images, one component at a time, for embedding in a README
+// or a job summary. These use only deterministic, browser-free layouts (no force
+// graph), so a given model always yields byte-stable SVG. Colors are the atlas
+// light-theme brand tokens, inlined so the image needs no external CSS.
+
+/// Component names `render_svg` understands.
+pub const SVG_COMPONENTS: &[&str] = &["coverage", "langmix", "treemap"];
+
+const SVG_BG: &str = "#faf9f6";
+const SVG_BORDER: &str = "#dcdad2";
+const SVG_MUTED: &str = "#4a4f55";
+const SVG_FAINT: &str = "#6b7076";
+const SVG_TEAL: &str = "#0e6f66";
+const SVG_GOLD: &str = "#b07a1e";
+const SVG_CLAY: &str = "#a0492e";
+const SVG_TRACK: &str = "#e7e5dd";
+const SVG_FONT: &str =
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const SVG_MONO: &str = "ui-monospace,'SF Mono',Menlo,Consolas,monospace";
+const SVG_LANGS: &[&str] = &[
+    "#0e6f66", "#1e6fa8", "#b07a1e", "#2f6b3a", "#a0492e", "#0b5750",
+];
+
+/// Render one atlas component as a standalone SVG string suitable for embedding
+/// as an image. Unknown component names are an error listing the valid ones.
+pub fn render_svg(m: &Model, component: &str) -> Result<String> {
+    match component {
+        "coverage" => Ok(svg_coverage(m)),
+        "langmix" => Ok(svg_langmix(m)),
+        "treemap" => Ok(svg_treemap(m)),
+        other => anyhow::bail!(
+            "unknown svg component {:?}; valid: {}",
+            other,
+            SVG_COMPONENTS.join(", ")
+        ),
+    }
+}
+
+/// Open an SVG of the given size with a rounded brand-card background.
+fn svg_open(w: f64, h: f64) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
+         viewBox=\"0 0 {w} {h}\" font-family=\"{font}\" role=\"img\">\
+         <rect x=\"0.5\" y=\"0.5\" width=\"{iw}\" height=\"{ih}\" rx=\"11.5\" \
+         fill=\"{bg}\" stroke=\"{border}\"/>",
+        w = w,
+        h = h,
+        iw = w - 1.0,
+        ih = h - 1.0,
+        font = SVG_FONT,
+        bg = SVG_BG,
+        border = SVG_BORDER,
+    )
+}
+
+/// A section eyebrow: a small teal square plus an uppercase mono label.
+fn svg_eyebrow(x: f64, y: f64, label: &str) -> String {
+    format!(
+        "<rect x=\"{x}\" y=\"{sy}\" width=\"8\" height=\"8\" rx=\"2\" fill=\"{teal}\"/>\
+         <text x=\"{tx}\" y=\"{ty}\" font-family=\"{mono}\" font-size=\"11\" \
+         letter-spacing=\"1.2\" fill=\"{faint}\">{label}</text>",
+        x = x,
+        sy = y - 8.0,
+        tx = x + 15.0,
+        ty = y,
+        teal = SVG_TEAL,
+        mono = SVG_MONO,
+        faint = SVG_FAINT,
+        label = esc(label),
+    )
+}
+
+/// A color for coverage health, matching the atlas verdict tone.
+fn coverage_color(pct: f64) -> &'static str {
+    if pct >= 90.0 {
+        SVG_TEAL
+    } else if pct >= 60.0 {
+        SVG_GOLD
+    } else {
+        SVG_CLAY
+    }
+}
+
+/// The verdict card: a big coverage percentage, a progress bar, and the counts.
+fn svg_coverage(m: &Model) -> String {
+    let (w, h) = (460.0, 156.0);
+    let s = &m.stats;
+    let pct = s.coverage_pct.clamp(0.0, 100.0);
+    let accent = coverage_color(pct);
+    let bar_w = (412.0 * pct / 100.0).max(0.0);
+    let mut o = svg_open(w, h);
+    o.push_str(&svg_eyebrow(24.0, 30.0, "SPEC COVERAGE"));
+    o.push_str(&format!(
+        "<text x=\"420\" y=\"30\" text-anchor=\"end\" font-family=\"{mono}\" \
+         font-size=\"11\" fill=\"{faint}\">atlas</text>",
+        mono = SVG_MONO,
+        faint = SVG_FAINT,
+    ));
+    o.push_str(&format!(
+        "<text x=\"24\" y=\"84\" font-size=\"46\" font-weight=\"700\" fill=\"{accent}\">{pct:.0}%</text>",
+        accent = accent,
+        pct = pct,
+    ));
+    o.push_str(&format!(
+        "<text x=\"24\" y=\"106\" font-size=\"13\" fill=\"{muted}\">of code is covered by a spec</text>",
+        muted = SVG_MUTED,
+    ));
+    o.push_str(&format!(
+        "<rect x=\"24\" y=\"116\" width=\"412\" height=\"9\" rx=\"4.5\" fill=\"{track}\"/>\
+         <rect x=\"24\" y=\"116\" width=\"{bw:.2}\" height=\"9\" rx=\"4.5\" fill=\"{accent}\"/>",
+        track = SVG_TRACK,
+        bw = bar_w,
+        accent = accent,
+    ));
+    let sub = format!(
+        "{} spec{} \u{b7} {} file{} \u{b7} {} orphan{} \u{b7} {} phantom{}",
+        s.specs,
+        plural(s.specs),
+        s.source_files,
+        plural(s.source_files),
+        s.orphan_files,
+        plural(s.orphan_files),
+        s.phantom_refs,
+        plural(s.phantom_refs),
+    );
+    o.push_str(&format!(
+        "<text x=\"24\" y=\"144\" font-family=\"{mono}\" font-size=\"12\" fill=\"{faint}\">{sub}</text>",
+        mono = SVG_MONO,
+        faint = SVG_FAINT,
+        sub = esc(&sub),
+    ));
+    o.push_str("</svg>");
+    o
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// The language mix: a stacked bar plus a legend, largest language first.
+fn svg_langmix(m: &Model) -> String {
+    let (w, h) = (460.0, 104.0);
+    let mut o = svg_open(w, h);
+    o.push_str(&svg_eyebrow(24.0, 30.0, "LANGUAGE MIX"));
+    if m.languages.is_empty() {
+        o.push_str(&format!(
+            "<text x=\"24\" y=\"64\" font-size=\"13\" fill=\"{faint}\">No source files.</text></svg>",
+            faint = SVG_FAINT,
+        ));
+        return o;
+    }
+    // Top languages get their own segment; the rest fold into "other".
+    let total_loc: usize = m.languages.iter().map(|l| l.loc).sum::<usize>().max(1);
+    let top = 5usize.min(m.languages.len());
+    let (bx, by, bw, bh) = (24.0, 44.0, 412.0, 14.0);
+    o.push_str(&format!(
+        "<clipPath id=\"lm\"><rect x=\"{bx}\" y=\"{by}\" width=\"{bw}\" height=\"{bh}\" rx=\"7\"/></clipPath>\
+         <g clip-path=\"url(#lm)\">",
+    ));
+    let mut cx = bx;
+    for (i, lang) in m.languages.iter().take(top).enumerate() {
+        let seg = bw * (lang.loc as f64) / (total_loc as f64);
+        o.push_str(&format!(
+            "<rect x=\"{cx:.2}\" y=\"{by}\" width=\"{seg:.2}\" height=\"{bh}\" fill=\"{c}\"/>",
+            cx = cx,
+            by = by,
+            seg = seg,
+            bh = bh,
+            c = SVG_LANGS[i % SVG_LANGS.len()],
+        ));
+        cx += seg;
+    }
+    if m.languages.len() > top {
+        o.push_str(&format!(
+            "<rect x=\"{cx:.2}\" y=\"{by}\" width=\"{seg:.2}\" height=\"{bh}\" fill=\"{c}\"/>",
+            cx = cx,
+            by = by,
+            seg = (bx + bw - cx).max(0.0),
+            bh = bh,
+            c = SVG_FAINT,
+        ));
+    }
+    o.push_str("</g>");
+    // Legend row.
+    let mut lx = 24.0;
+    let ly = 84.0;
+    for (i, lang) in m.languages.iter().take(top).enumerate() {
+        let label = format!("{} {} ({})", lang.lang, commas(lang.loc), lang.files);
+        o.push_str(&format!(
+            "<rect x=\"{lx:.1}\" y=\"{sy}\" width=\"9\" height=\"9\" rx=\"2\" fill=\"{c}\"/>\
+             <text x=\"{tx:.1}\" y=\"{ty}\" font-family=\"{mono}\" font-size=\"11\" fill=\"{muted}\">{label}</text>",
+            lx = lx,
+            sy = ly - 9.0,
+            c = SVG_LANGS[i % SVG_LANGS.len()],
+            tx = lx + 14.0,
+            ty = ly,
+            mono = SVG_MONO,
+            muted = SVG_MUTED,
+            label = esc(&label),
+        ));
+        lx += 14.0 + 7.0 * (label.chars().count() as f64) + 16.0;
+    }
+    o.push_str("</svg>");
+    o
+}
+
+/// The coverage treemap: every file sized by LOC, colored by governance.
+fn svg_treemap(m: &Model) -> String {
+    let (w, h) = (460.0, 300.0);
+    let mut o = svg_open(w, h);
+    o.push_str(&svg_eyebrow(24.0, 30.0, "COVERAGE TREEMAP"));
+    // Legend, right-aligned.
+    let legend = [
+        ("covered", SVG_TEAL),
+        ("overlap", SVG_GOLD),
+        ("orphan", SVG_CLAY),
+    ];
+    let mut lx = 436.0;
+    for (label, color) in legend.iter().rev() {
+        let tw = 6.5 * (label.chars().count() as f64);
+        lx -= tw;
+        o.push_str(&format!(
+            "<text x=\"{tx:.1}\" y=\"30\" font-family=\"{mono}\" font-size=\"10\" fill=\"{faint}\">{label}</text>",
+            tx = lx,
+            mono = SVG_MONO,
+            faint = SVG_FAINT,
+            label = esc(label),
+        ));
+        lx -= 6.0;
+        o.push_str(&format!(
+            "<rect x=\"{rx:.1}\" y=\"22\" width=\"8\" height=\"8\" rx=\"2\" fill=\"{c}\"/>",
+            rx = lx - 8.0,
+            c = color,
+        ));
+        lx -= 8.0 + 12.0;
+    }
+
+    let mut files: Vec<&FileOut> = m.files.iter().filter(|f| f.loc > 0).collect();
+    files.sort_by_key(|f| std::cmp::Reverse(f.loc));
+    // Cap tiles so a huge repo stays a small image; the tail is negligible LOC.
+    files.truncate(160);
+    let (ax, ay, aw, ah) = (20.0, 44.0, 420.0, 236.0);
+    if files.is_empty() {
+        o.push_str(&format!(
+            "<text x=\"24\" y=\"160\" font-size=\"13\" fill=\"{faint}\">No source files to map.</text></svg>",
+            faint = SVG_FAINT,
+        ));
+        return o;
+    }
+    let weights: Vec<f64> = files.iter().map(|f| f.loc as f64).collect();
+    let rects = treemap_layout(&weights, ax, ay, aw, ah);
+    for (f, (tx, ty, tw, th)) in files.iter().zip(rects.iter()) {
+        let color = if f.overlap {
+            SVG_GOLD
+        } else if f.orphan {
+            SVG_CLAY
+        } else {
+            SVG_TEAL
+        };
+        o.push_str(&format!(
+            "<rect x=\"{tx:.2}\" y=\"{ty:.2}\" width=\"{tw:.2}\" height=\"{th:.2}\" \
+             fill=\"{color}\" stroke=\"{bg}\" stroke-width=\"1\"/>",
+            tx = tx,
+            ty = ty,
+            tw = tw,
+            th = th,
+            color = color,
+            bg = SVG_BG,
+        ));
+        // Label the tile if it is large enough to read.
+        if *tw > 52.0 && *th > 16.0 {
+            let base = f.path.rsplit('/').next().unwrap_or(&f.path);
+            let maxchars = ((tw - 10.0) / 6.0) as usize;
+            let label: String = if base.chars().count() > maxchars && maxchars > 1 {
+                let mut t: String = base.chars().take(maxchars.saturating_sub(1)).collect();
+                t.push('\u{2026}');
+                t
+            } else {
+                base.to_string()
+            };
+            o.push_str(&format!(
+                "<text x=\"{lx:.2}\" y=\"{ly:.2}\" font-family=\"{mono}\" font-size=\"9\" \
+                 fill=\"#ffffff\">{label}</text>",
+                lx = tx + 5.0,
+                ly = ty + 14.0,
+                mono = SVG_MONO,
+                label = esc(&label),
+            ));
+        }
+    }
+    o.push_str("</svg>");
+    o
+}
+
+/// Squarified treemap (Bruls, Huizing, van Wijk): lay `weights` into the rect
+/// keeping each tile as close to square as possible. Returns one `(x, y, w, h)`
+/// per input weight, in input order. Zero or negative weights map to empty rects.
+fn treemap_layout(weights: &[f64], x: f64, y: f64, w: f64, h: f64) -> Vec<(f64, f64, f64, f64)> {
+    let n = weights.len();
+    let mut out = vec![(0.0f64, 0.0, 0.0, 0.0); n];
+    let total: f64 = weights.iter().copied().filter(|v| *v > 0.0).sum();
+    if total <= 0.0 || w <= 0.0 || h <= 0.0 {
+        return out;
+    }
+    let mut order: Vec<usize> = (0..n).filter(|&i| weights[i] > 0.0).collect();
+    order.sort_by(|&a, &b| {
+        weights[b]
+            .partial_cmp(&weights[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let scale = (w * h) / total;
+
+    let (mut fx, mut fy, mut fw, mut fh) = (x, y, w, h);
+    let mut k = 0usize;
+    while k < order.len() {
+        let short = fw.min(fh);
+        // Greedily extend the current row while the worst aspect ratio improves.
+        let mut cur_sum = 0.0f64;
+        let mut cur_min = f64::INFINITY;
+        let mut cur_max = 0.0f64;
+        let mut cur_worst = f64::INFINITY;
+        let mut j = k;
+        while j < order.len() {
+            let a = weights[order[j]] * scale;
+            let ns = cur_sum + a;
+            let nmin = cur_min.min(a);
+            let nmax = cur_max.max(a);
+            let s2 = ns * ns;
+            let w2 = short * short;
+            let cand = (w2 * nmax / s2).max(s2 / (w2 * nmin));
+            if j == k || cand <= cur_worst {
+                cur_sum = ns;
+                cur_min = nmin;
+                cur_max = nmax;
+                cur_worst = cand;
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        let thickness = if short > 0.0 { cur_sum / short } else { 0.0 };
+        if fw <= fh {
+            // Row spans the width; its thickness eats into the height.
+            let mut cx = fx;
+            for t in k..j {
+                let a = weights[order[t]] * scale;
+                let tw = if thickness > 0.0 { a / thickness } else { 0.0 };
+                out[order[t]] = (cx, fy, tw, thickness);
+                cx += tw;
+            }
+            fy += thickness;
+            fh -= thickness;
+        } else {
+            // Row spans the height; its thickness eats into the width.
+            let mut cy = fy;
+            for t in k..j {
+                let a = weights[order[t]] * scale;
+                let th = if thickness > 0.0 { a / thickness } else { 0.0 };
+                out[order[t]] = (fx, cy, thickness, th);
+                cy += th;
+            }
+            fx += thickness;
+            fw -= thickness;
+        }
+        k = j;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3542,5 +3918,108 @@ mod tests {
         assert_eq!(cov.per_spec[0], (1, 3, 1), "one code file, one non-code");
         assert_eq!(cov.phantoms[0], vec!["src/missing.rs".to_string()]);
         assert_eq!(sources[0].specs, vec![0]);
+    }
+
+    /// A small but representative model: one spec covering one file, one orphan.
+    fn demo_model() -> Model {
+        let specs = vec![Spec {
+            module: "m".into(),
+            status: "active".into(),
+            version: String::new(),
+            owner: String::new(),
+            rel_path: "specs/m.spec.md".into(),
+            files: vec!["src/a.rs".into()],
+            depends_on: Vec::new(),
+            companions: Vec::new(),
+            sections: 0,
+            drift: None,
+            prose_html: None,
+        }];
+        let mut sources = vec![
+            Source {
+                rel_path: "src/a.rs".into(),
+                loc: 120,
+                lang: "Rust",
+                specs: Vec::new(),
+                test: None,
+            },
+            Source {
+                rel_path: "web/b.js".into(),
+                loc: 40,
+                lang: "TypeScript/JS",
+                specs: Vec::new(),
+                test: None,
+            },
+        ];
+        let existing: HashSet<String> = ["src/a.rs".to_string()].into_iter().collect();
+        let cov = attach_specs(&specs, &mut sources, &existing);
+        build_model("demo", &specs, &sources, &cov, None)
+    }
+
+    #[test]
+    fn render_svg_emits_a_self_contained_image_per_component() {
+        let m = demo_model();
+        for c in SVG_COMPONENTS {
+            let svg = render_svg(&m, c).expect("known component renders");
+            assert!(svg.starts_with("<svg "), "{c} opens with <svg>");
+            assert!(svg.trim_end().ends_with("</svg>"), "{c} closes </svg>");
+            assert!(
+                !svg.contains("http://") || svg.contains("www.w3.org"),
+                "{c} references no external URL but the SVG namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn render_svg_rejects_unknown_components() {
+        let m = demo_model();
+        let err = render_svg(&m, "bogus").unwrap_err().to_string();
+        assert!(
+            err.contains("bogus") && err.contains("treemap"),
+            "lists valid names: {err}"
+        );
+    }
+
+    #[test]
+    fn render_svg_treemap_colors_covered_and_orphan_files() {
+        let m = demo_model();
+        let svg = render_svg(&m, "treemap").unwrap();
+        assert!(svg.contains(SVG_TEAL), "the covered file is teal");
+        assert!(svg.contains(SVG_CLAY), "the orphan file is clay");
+        assert!(svg.contains("a.rs"), "the largest tile is labeled");
+    }
+
+    #[test]
+    fn treemap_layout_tiles_the_rect_proportionally() {
+        let weights = [50.0, 30.0, 20.0];
+        let rects = treemap_layout(&weights, 0.0, 0.0, 100.0, 100.0);
+        assert_eq!(rects.len(), 3);
+        let total_area: f64 = rects.iter().map(|(_, _, w, h)| w * h).sum();
+        assert!(
+            (total_area - 10_000.0).abs() < 1.0,
+            "tiles fill the rect: {total_area}"
+        );
+        for (x, y, w, h) in &rects {
+            assert!(
+                *x >= -0.01 && *y >= -0.01 && x + w <= 100.01 && y + h <= 100.01,
+                "in bounds"
+            );
+        }
+        // The biggest weight gets the biggest tile.
+        let a0 = rects[0].2 * rects[0].3;
+        let a2 = rects[2].2 * rects[2].3;
+        assert!(a0 > a2, "area tracks weight");
+    }
+
+    #[test]
+    fn treemap_layout_handles_empty_and_zero_weights() {
+        assert!(treemap_layout(&[], 0.0, 0.0, 10.0, 10.0).is_empty());
+        let rects = treemap_layout(&[0.0, 5.0], 0.0, 0.0, 10.0, 10.0);
+        assert_eq!(
+            rects[0],
+            (0.0, 0.0, 0.0, 0.0),
+            "zero weight is an empty tile"
+        );
+        assert!(rects[1].2 * rects[1].3 > 0.0, "positive weight gets area");
     }
 }
