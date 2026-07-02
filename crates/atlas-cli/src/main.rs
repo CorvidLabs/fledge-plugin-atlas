@@ -1478,23 +1478,43 @@ fn gather_augur(root: &Path) -> Option<AugurSummary> {
     })
 }
 
-/// Run `augur check --json` in `root`, time-boxed. Reads output on a worker
-/// thread so a slow or hung `augur` can never stall the atlas: on timeout we
-/// stop waiting and return `None`, leaving the detached process to exit on its
-/// own. Absence of the binary also yields `None`.
+/// Run `augur check --json` in `root`, time-boxed. Spawns the process and reads
+/// its stdout on a worker thread so a slow or hung `augur` can never stall the
+/// atlas: on timeout we kill the child (so it and the thread cannot leak) and
+/// return `None`. Absence of the binary also yields `None`.
 fn run_augur_json(root: &Path, timeout: Duration) -> Option<Vec<u8>> {
-    let root = root.to_path_buf();
+    use std::io::Read;
+
+    let mut child = Command::new("augur")
+        .args(["check", "--json", "-C", &root.to_string_lossy()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    // The reader thread owns stdout; it ends at EOF, which arrives when augur
+    // exits on its own or when we kill it below.
+    let mut stdout = child.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let out = Command::new("augur")
-            .args(["check", "--json", "-C", &root.to_string_lossy()])
-            .stderr(std::process::Stdio::null())
-            .output();
-        let _ = tx.send(out);
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
     });
+
     match rx.recv_timeout(timeout) {
-        Ok(Ok(out)) if out.status.success() => Some(out.stdout),
-        _ => None,
+        // Output arrived within the budget: reap the child and honor its status.
+        Ok(buf) => match child.wait() {
+            Ok(status) if status.success() => Some(buf),
+            _ => None,
+        },
+        // Timed out (or the reader hung up): kill the child so neither it nor
+        // the reader thread is left dangling.
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
     }
 }
 

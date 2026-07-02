@@ -188,11 +188,12 @@ async function buildProject(owner, repo, onProgress) {
 // content comes back already decoded.
 async function fetchBlobs(owner, repo, entries, onProgress) {
   const out = new Array(entries.length);
-  let next = 0, done = 0;
+  let next = 0, done = 0, aborted = false;
   const CONCURRENCY = 6;
 
   async function worker() {
     while (true) {
+      if (aborted) return;
       const i = next++;
       if (i >= entries.length) return;
       const e = entries[i];
@@ -202,7 +203,9 @@ async function fetchBlobs(owner, repo, entries, onProgress) {
         });
         out[i] = { path: e.path, contents: await res.text() };
       } catch (err) {
-        if (err instanceof RateLimitError) throw err;
+        // A rate limit is terminal: stop the other workers so they do not burn
+        // more of the budget, then propagate.
+        if (err instanceof RateLimitError) { aborted = true; throw err; }
         out[i] = null; // one unreadable blob should not sink the atlas
       }
       done++;
@@ -255,11 +258,12 @@ async function buildHistory(owner, repo, branch, windowSize, onProgress) {
 
   const win = entries.slice(0, windowSize);
   const commits = new Array(win.length);
-  let next = 0, done = 0, withFiles = 0;
+  let next = 0, done = 0, withFiles = 0, aborted = false;
   const CONCURRENCY = 6;
 
   async function worker() {
     while (true) {
+      if (aborted) return;
       const i = next++;
       if (i >= win.length) return;
       const { sha } = win[i];
@@ -275,7 +279,8 @@ async function buildHistory(owner, repo, branch, windowSize, onProgress) {
         if (fileList.length) withFiles++;
         commits[i] = { ts, files: fileList };
       } catch (err) {
-        if (err instanceof RateLimitError) throw err;
+        // A rate limit is terminal: stop the other workers, then propagate.
+        if (err instanceof RateLimitError) { aborted = true; throw err; }
         commits[i] = { ts, files: [] };
       }
       done++;
