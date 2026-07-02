@@ -1,43 +1,32 @@
 # atlas web app
 
-Render any GitHub repository as an interactive HTML atlas, entirely in the
-browser. The Rust analysis and render engine (`atlas-core`) is compiled to
-WebAssembly and runs client-side; the only backend is a tiny OAuth
-token-exchange worker (see `../auth-worker`).
+Render any public GitHub repository as an interactive HTML atlas, entirely in
+the browser. The Rust analysis and render engine (`atlas-core`) is compiled to
+WebAssembly and runs client-side. There is no sign-in and no server.
 
 ## How it works
 
-1. **Sign in with GitHub** opens a popup to the auth worker, which runs the
-   OAuth code exchange (the one step a static site cannot do safely, since it
-   needs the client secret) and `postMessage`s the token back to this page only.
-   The token lives in `localStorage`; no app server ever sees it or your code.
-2. You enter `owner/repo` (or a full GitHub URL). The app calls `api.github.com`
-   directly with your token:
+1. You enter `owner/repo` (or a full GitHub URL).
+2. The app calls the public GitHub API directly:
    - `GET /repos/{o}/{r}` for the default branch,
    - `GET /git/trees/{branch}?recursive=1` for every path,
    - `GET /git/blobs/{sha}` (raw) for each `*.spec.md`, recognized source file,
      `.3md` deck, and `lcov.info`,
    - `GET /commits` plus per-commit detail to reconstruct recent history.
-3. The gathered `Project` JSON is handed to the WASM `render()` function, which
-   runs the exact same engine as the `fledge atlas` CLI and returns one
-   self-contained HTML atlas. It is shown in a sandboxed `<iframe srcdoc>`.
+3. The gathered data is handed to the WASM `render()` function, which runs the
+   same engine as the `fledge atlas` CLI and returns one self-contained HTML
+   atlas, shown in a sandboxed `<iframe srcdoc>`.
 
 Repos with no specs still get a treemap, language mix, and orphan clusters.
 
-## Configure
+## Rate limits and the optional token
 
-Edit `config.js`:
-
-- `workerOrigin` - the origin of your deployed auth worker, e.g.
-  `https://atlas-auth.your-subdomain.workers.dev`.
-- `scope` - OAuth scope (`repo read:user` for private repos, or
-  `public_repo read:user` for a public-only deployment).
-- `historyCommits` - how many recent commits to fetch file lists for (each is
-  one API call, so this bounds the cost). Older history is not included.
-- `maxBlobBytes` - skip fetching any single file larger than this.
-
-You can also set the GitHub Actions repository variable `ATLAS_WORKER_ORIGIN`
-and the deploy workflow bakes it into `config.js` at build time.
+Anonymous GitHub requests share a limit of 60 per hour, which is enough for a
+small repo. To raise it to 5,000 per hour (and to read private repos), open the
+"Add a token" disclosure and paste a
+[personal access token](https://github.com/settings/tokens) (classic; `repo`
+scope for private repos, or no scope for public). It is stored only in your
+browser's `localStorage` and sent only to `api.github.com`. There is no backend.
 
 ## Build locally
 
@@ -47,8 +36,8 @@ wasm-pack build crates/atlas-wasm --target web --release \
   --out-dir web/app/pkg --out-name atlas
 ```
 
-Then serve this directory over HTTP (module scripts and WASM need a real
-origin, not `file://`):
+Then serve this directory over HTTP (module scripts and WASM need a real origin,
+not `file://`):
 
 ```
 python3 -m http.server 8000   # then open http://localhost:8000/web/app/
@@ -64,7 +53,7 @@ in CI and is not committed.
 ## History is approximate
 
 GitHub does not expose per-commit file lists in bulk, so each commit's changed
-files cost one API call. The app fetches a bounded window (default 60 commits)
-and says so in a note above the rendered atlas. The activity heat map,
-contribution calendar, "since you last looked", and churn-vs-coverage views are
-built from that window; history older than it is not shown.
+files cost one API call. The app fetches a bounded window (smaller when
+anonymous, wider with a token) and says so in a note above the rendered atlas.
+The activity heat map, contribution calendar, "since you last looked", and
+churn-vs-coverage views are built from that window.

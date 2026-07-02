@@ -1,9 +1,0 @@
-name = "atlas-auth"
-main = "src/worker.js"
-compatibility_date = "2024-11-01"
-
-# Public config. The client SECRET is set separately and never committed:
-#   wrangler secret put GITHUB_CLIENT_SECRET
-[vars]
-GITHUB_CLIENT_ID = "REPLACE_WITH_OAUTH_APP_CLIENT_ID"
-ALLOWED_ORIGIN = "https://REPLACE.github.io"

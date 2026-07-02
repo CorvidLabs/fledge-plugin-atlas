@@ -1,18 +1,19 @@
-// Atlas web app: sign in with GitHub, fetch a repo client-side, and render its
-// interactive atlas with the WASM engine. No app server is involved; the only
-// backend is the OAuth token-exchange worker.
+// Atlas web app: fetch a public GitHub repo client-side and render its
+// interactive atlas with the WASM engine. No sign-in, no server. An optional
+// personal access token (stored only in this browser) raises the rate limit and
+// unlocks private repos.
 
 import init, { render } from "./pkg/atlas.js";
 
-const CONFIG = window.ATLAS_CONFIG || {};
-const WORKER_ORIGIN = (CONFIG.workerOrigin || "").replace(/\/+$/, "");
-const SCOPE = CONFIG.scope || "repo read:user";
-const HISTORY_COMMITS = CONFIG.historyCommits || 60;
-const MAX_BLOB_BYTES = CONFIG.maxBlobBytes || 524288;
-const MAX_CODE_FILES = 600; // hard cap on fetched code files, keeps API cost bounded
-
 const TOKEN_KEY = "atlas_gh_token";
-const STATE_KEY = "atlas_oauth_state";
+const MAX_BLOB_BYTES = 524288;
+
+// Anonymous GitHub requests share a 60-per-hour budget, so keep the fetch small.
+// A saved token lifts the limit to 5,000/hour, so we can be generous.
+const LIMITS = {
+  anon: { historyCommits: 12, maxCodeFiles: 45 },
+  token: { historyCommits: 40, maxCodeFiles: 600 },
+};
 
 // Source extensions the CLI counts as code (mirror of CODE_EXTS in atlas-core).
 const CODE_EXTS = new Set([
@@ -26,95 +27,27 @@ const EXAMPLE_REPOS = [
   "sindresorhus/slugify",
 ];
 
-// ---- tiny DOM helpers ----------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const show = (el) => el && el.removeAttribute("hidden");
 const hide = (el) => el && el.setAttribute("hidden", "");
 
 let wasmReady = false;
-let lastRate = null;
 
-// ---- auth ----------------------------------------------------------------
+// ---- optional token ------------------------------------------------------
 
 function token() {
   try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
 }
+function setToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {} }
+function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+function limits() { return token() ? LIMITS.token : LIMITS.anon; }
 
-function setToken(t) {
-  try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
-}
-
-function clearToken() {
-  try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
-}
-
-function configured() {
-  return WORKER_ORIGIN && !WORKER_ORIGIN.includes("REPLACE");
-}
-
-function startSignIn() {
-  if (!configured()) return;
-  const state = crypto.randomUUID();
-  try { sessionStorage.setItem(STATE_KEY, state); } catch (e) {}
-  const url = `${WORKER_ORIGIN}/login?state=${encodeURIComponent(state)}&scope=${encodeURIComponent(SCOPE)}`;
-  const w = 720, h = 820;
-  const left = Math.max(0, (screen.width - w) / 2);
-  const top = Math.max(0, (screen.height - h) / 2);
-  const popup = window.open(url, "atlas-auth", `width=${w},height=${h},left=${left},top=${top}`);
-  if (!popup) {
-    $("signin-note").textContent = "Popup blocked. Allow popups for this site, then try again.";
+function updateTokenUI() {
+  const note = $("token-note");
+  if (token()) {
+    note.textContent = "A token is saved. Requests use it (5,000/hour, private repos included).";
   } else {
-    $("signin-note").textContent = "Waiting for GitHub...";
-  }
-}
-
-// The worker's callback page postMessages the token here, targeted at this
-// origin only. Verify the sender origin and the state nonce before trusting it.
-window.addEventListener("message", (event) => {
-  if (event.origin !== WORKER_ORIGIN) return;
-  const data = event.data;
-  if (!data || data.source !== "atlas-auth") return;
-
-  let expected = null;
-  try { expected = sessionStorage.getItem(STATE_KEY); } catch (e) {}
-  if (!expected || data.state !== expected) return; // CSRF / replay guard
-  try { sessionStorage.removeItem(STATE_KEY); } catch (e) {}
-
-  if (data.token) {
-    setToken(data.token);
-    onAuthChanged();
-  } else if (data.error) {
-    $("signin-note").textContent = "Sign-in failed: " + data.error;
-  }
-});
-
-function signOut() {
-  clearToken();
-  onAuthChanged();
-}
-
-function onAuthChanged() {
-  const authed = !!token();
-  if (authed) {
-    hide($("gate"));
-    show($("picker"));
-    show($("signout"));
-    $("repo").focus();
-  } else {
-    show($("gate"));
-    hide($("picker"));
-    hide($("result"));
-    hide($("status"));
-    hide($("error"));
-    hide($("signout"));
-    hide($("rate"));
-    if (configured()) {
-      show($("signin-card"));
-      hide($("config-missing"));
-    } else {
-      hide($("signin-card"));
-      show($("config-missing"));
-    }
+    note.textContent = "No token: anonymous requests (60/hour, public repos only).";
   }
 }
 
@@ -130,9 +63,7 @@ class RateLimitError extends Error {
 function updateRate(res) {
   const remaining = res.headers.get("x-ratelimit-remaining");
   const limit = res.headers.get("x-ratelimit-limit");
-  const reset = res.headers.get("x-ratelimit-reset");
   if (remaining !== null) {
-    lastRate = { remaining: +remaining, limit: +limit, reset: +reset };
     const el = $("rate");
     el.textContent = `${remaining}/${limit} API calls left`;
     show(el);
@@ -151,15 +82,13 @@ async function gh(path, { accept } = {}) {
   updateRate(res);
 
   if (res.status === 401) {
-    clearToken();
-    onAuthChanged();
-    throw new Error("Your GitHub sign-in expired. Please sign in again.");
+    throw new Error("That token was rejected. Clear it, or paste a valid one.");
   }
   if (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0") {
     throw new RateLimitError(+res.headers.get("x-ratelimit-reset"));
   }
   if (res.status === 404) {
-    throw new Error("Repository not found. Check the name, or make sure your token can see it.");
+    throw new Error("Repository not found. It may be private (add a token) or misnamed.");
   }
   if (res.status === 409) {
     throw new Error("This repository is empty. There is nothing to map yet.");
@@ -191,6 +120,8 @@ function parseRepo(input) {
 // ---- fetch + assemble the Project ---------------------------------------
 
 async function buildProject(owner, repo, onProgress) {
+  const { historyCommits, maxCodeFiles } = limits();
+
   onProgress("Reading repository metadata...");
   const meta = await (await gh(`/repos/${owner}/${repo}`)).json();
   const branch = meta.default_branch || "main";
@@ -205,15 +136,10 @@ async function buildProject(owner, repo, onProgress) {
   const paths = blobs.map((e) => e.path);
   const treeTruncated = !!tree.truncated;
 
-  // Decide which blobs to fetch contents for: specs, recognized code, .3md
-  // decks, and an lcov report. Companion docs need only appear in `paths`.
   const wanted = [];
-  let codeCount = 0;
-  let skippedLarge = 0;
-  let cappedCode = 0;
+  let codeCount = 0, skippedLarge = 0, cappedCode = 0;
   for (const e of blobs) {
-    const p = e.path;
-    const lower = p.toLowerCase();
+    const lower = e.path.toLowerCase();
     const base = lower.split("/").pop();
     const ext = base.includes(".") ? base.split(".").pop() : "";
     const isSpec = lower.endsWith(".spec.md");
@@ -223,7 +149,7 @@ async function buildProject(owner, repo, onProgress) {
     if (!(isSpec || is3md || isLcov || isCode)) continue;
     if (typeof e.size === "number" && e.size > MAX_BLOB_BYTES) { skippedLarge++; continue; }
     if (isCode) {
-      if (codeCount >= MAX_CODE_FILES) { cappedCode++; continue; }
+      if (codeCount >= maxCodeFiles) { cappedCode++; continue; }
       codeCount++;
     }
     wanted.push(e);
@@ -232,16 +158,13 @@ async function buildProject(owner, repo, onProgress) {
   onProgress(`Fetching ${wanted.length} files...`, "source, specs, and coverage");
   const files = await fetchBlobs(owner, repo, wanted, onProgress);
 
-  // Optional lcov overlay: pull it out of the fetched files.
   let lcov = null;
   const lcovFile = files.find((f) => f.path.toLowerCase().split("/").pop() === "lcov.info");
-  if (lcovFile) {
-    lcov = lcovFile.contents;
-  }
+  if (lcovFile) lcov = lcovFile.contents;
   const contentFiles = files.filter((f) => f.path.toLowerCase().split("/").pop() !== "lcov.info");
 
   onProgress("Reconstructing history from commits...");
-  const history = await buildHistory(owner, repo, branch, onProgress);
+  const history = await buildHistory(owner, repo, branch, historyCommits, onProgress);
 
   const project = {
     project: fullName,
@@ -254,25 +177,19 @@ async function buildProject(owner, repo, onProgress) {
   return {
     project,
     info: {
-      fullName,
-      branch,
-      fileCount: contentFiles.length,
-      pathCount: paths.length,
-      treeTruncated,
-      skippedLarge,
-      cappedCode,
+      fullName, branch, fileCount: contentFiles.length, pathCount: paths.length,
+      treeTruncated, skippedLarge, cappedCode, historyWindow: historyCommits,
       ...history.info,
     },
   };
 }
 
-// Fetch blob contents with bounded concurrency. Uses the raw media type so the
-// content comes back already decoded (no base64 round-trip in the browser).
+// Fetch blob contents with bounded concurrency, using the raw media type so the
+// content comes back already decoded.
 async function fetchBlobs(owner, repo, entries, onProgress) {
   const out = new Array(entries.length);
-  let next = 0;
-  let done = 0;
-  const CONCURRENCY = 8;
+  let next = 0, done = 0;
+  const CONCURRENCY = 6;
 
   async function worker() {
     while (true) {
@@ -286,8 +203,7 @@ async function fetchBlobs(owner, repo, entries, onProgress) {
         out[i] = { path: e.path, contents: await res.text() };
       } catch (err) {
         if (err instanceof RateLimitError) throw err;
-        // A single unreadable blob should not sink the whole atlas.
-        out[i] = null;
+        out[i] = null; // one unreadable blob should not sink the atlas
       }
       done++;
       if (done % 10 === 0 || done === entries.length) {
@@ -296,41 +212,29 @@ async function fetchBlobs(owner, repo, entries, onProgress) {
     }
   }
 
-  const workers = Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker);
-  await Promise.all(workers);
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker));
   return out.filter(Boolean);
 }
 
-// Parse the last page number out of a GitHub `Link` header, so we can estimate
-// the true commit count without walking every page.
 function lastPageFromLink(link) {
   if (!link) return null;
   const m = link.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
   return m ? parseInt(m[1], 10) : null;
 }
 
-// Reconstruct history for the atlas's time-based views (activity heat map,
-// contribution calendar, since-you-last-looked, churn-vs-coverage). The commits
-// list gives timestamps cheaply (and, on page one, an estimate of the total via
-// the Link header); the per-commit file lists that classify a day as spec vs
-// code cost one API call each, so that detail is bounded to a fixed window and
-// the exact coverage is surfaced in the UI.
-async function buildHistory(owner, repo, branch, onProgress) {
-  const emptyInfo = {
-    historyCovered: 0, historyWithFiles: 0, historyBounded: false,
-    approxTotal: 0, oldestTs: 0, newestTs: 0,
-  };
+// Reconstruct recent history for the atlas's time-based views. The commits list
+// gives timestamps cheaply; per-commit file lists cost one API call each, so the
+// detail is bounded to a window and the coverage is surfaced in the UI.
+async function buildHistory(owner, repo, branch, windowSize, onProgress) {
+  const emptyInfo = { historyCovered: 0, historyWithFiles: 0, historyBounded: false, approxTotal: 0, oldestTs: 0, newestTs: 0 };
 
-  // ---- page the commits list up to the window, capturing timestamps ----
-  const entries = []; // { sha, ts } newest-first
+  const entries = [];
   let approxTotal = 0;
-  const pages = Math.max(1, Math.ceil(HISTORY_COMMITS / 100));
-  for (let page = 1; page <= pages && entries.length < HISTORY_COMMITS; page++) {
+  const pages = Math.max(1, Math.ceil(windowSize / 100));
+  for (let page = 1; page <= pages && entries.length < windowSize; page++) {
     let res, list;
     try {
-      res = await gh(
-        `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=100&page=${page}`
-      );
+      res = await gh(`/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=100&page=${page}`);
       list = await res.json();
     } catch (err) {
       if (err instanceof RateLimitError) throw err;
@@ -339,34 +243,32 @@ async function buildHistory(owner, repo, branch, onProgress) {
     if (!Array.isArray(list) || list.length === 0) break;
     if (page === 1) {
       const last = lastPageFromLink(res.headers.get("Link"));
-      approxTotal = last ? last * 100 : list.length; // upper-bound estimate
+      approxTotal = last ? last * 100 : list.length;
     }
     for (const c of list) {
       const d = c.commit && c.commit.committer && c.commit.committer.date;
-      const ts = d ? Math.floor(Date.parse(d) / 1000) : 0;
-      entries.push({ sha: c.sha, ts });
+      entries.push({ sha: c.sha, ts: d ? Math.floor(Date.parse(d) / 1000) : 0 });
     }
-    if (list.length < 100) { approxTotal = entries.length; break; } // reached the end
+    if (list.length < 100) { approxTotal = entries.length; break; }
   }
   if (entries.length === 0) return { commits: [], info: emptyInfo };
 
-  const window = entries.slice(0, HISTORY_COMMITS);
-  const commits = new Array(window.length);
+  const win = entries.slice(0, windowSize);
+  const commits = new Array(win.length);
   let next = 0, done = 0, withFiles = 0;
-  const CONCURRENCY = 8;
+  const CONCURRENCY = 6;
 
   async function worker() {
     while (true) {
       const i = next++;
-      if (i >= window.length) return;
-      const { sha } = window[i];
-      let ts = window[i].ts;
+      if (i >= win.length) return;
+      const { sha } = win[i];
+      let ts = win[i].ts;
       try {
         const c = await (await gh(`/repos/${owner}/${repo}/commits/${sha}`)).json();
         if (!ts) {
-          const d =
-            (c.commit && c.commit.committer && c.commit.committer.date) ||
-            (c.commit && c.commit.author && c.commit.author.date);
+          const d = (c.commit && c.commit.committer && c.commit.committer.date) ||
+                    (c.commit && c.commit.author && c.commit.author.date);
           ts = d ? Math.floor(Date.parse(d) / 1000) : 0;
         }
         const fileList = (c.files || []).map((f) => f.filename).filter(Boolean);
@@ -374,20 +276,17 @@ async function buildHistory(owner, repo, branch, onProgress) {
         commits[i] = { ts, files: fileList };
       } catch (err) {
         if (err instanceof RateLimitError) throw err;
-        // Keep the timestamp even if the file list could not be fetched, so the
-        // commit still contributes to volume-based views.
         commits[i] = { ts, files: [] };
       }
       done++;
-      if (done % 10 === 0 || done === window.length) {
-        onProgress("Reconstructing history from commits...", `${done} of ${window.length} commits`);
+      if (done % 8 === 0 || done === win.length) {
+        onProgress("Reconstructing history from commits...", `${done} of ${win.length} commits`);
       }
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, window.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, win.length) }, worker));
 
-  // Newest-first, matching git log order, dropping any that failed to date.
   const cleaned = commits.filter((c) => c && c.ts > 0);
   cleaned.sort((a, b) => b.ts - a.ts);
   return {
@@ -442,7 +341,10 @@ async function renderRepo(input) {
     hide($("status"));
     if (err instanceof RateLimitError) {
       const when = err.reset ? new Date(err.reset * 1000).toLocaleTimeString() : "soon";
-      showError(`GitHub API rate limit reached. It resets around ${when}. Signed-in users get 5,000 calls per hour.`);
+      const hint = token()
+        ? ""
+        : " Adding a token (below) raises the limit to 5,000 per hour.";
+      showError(`GitHub's anonymous rate limit was reached (resets around ${when}).${hint}`);
     } else {
       showError(err.message || String(err));
     }
@@ -451,66 +353,49 @@ async function renderRepo(input) {
   }
 }
 
-let currentHtml = "";
-let currentName = "";
+let currentHtml = "", currentName = "";
 
 function showResult(html, parsed, info) {
   currentHtml = html;
   currentName = `${parsed.owner}-${parsed.repo}`;
 
   $("result-repo").textContent = info.fullName;
-  const bits = [`${info.fileCount} files mapped`, `${info.pathCount} paths`];
-  $("result-meta").textContent = bits.join("  ·  ");
+  $("result-meta").textContent = `${info.fileCount} files mapped  ·  ${info.pathCount} paths`;
 
-  // Be honest about history coverage and any caps that were hit.
-  const notes = [];
   const ymd = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
+  const notes = [];
   if (info.historyCovered > 0) {
     const ofTotal = info.historyBounded ? ` of about ${info.approxTotal}` : "";
-    const span = info.oldestTs && info.newestTs
-      ? ` spanning ${ymd(info.oldestTs)} to ${ymd(info.newestTs)}`
-      : "";
-    let note =
-      `History is reconstructed from the last ${info.historyCovered}${ofTotal} commit` +
-      `${info.historyCovered === 1 ? "" : "s"}${span} ` +
-      `(${info.historyWithFiles} carried file changes). GitHub charges one API call per commit ` +
-      `for its file list, so the time-based views cover this window; older history is not shown.`;
-    if (info.historyBounded) {
-      note += ` Raise historyCommits in config.js to widen it.`;
-    }
+    const span = info.oldestTs && info.newestTs ? ` spanning ${ymd(info.oldestTs)} to ${ymd(info.newestTs)}` : "";
+    let note = `History is reconstructed from the last ${info.historyCovered}${ofTotal} commit` +
+      `${info.historyCovered === 1 ? "" : "s"}${span} (${info.historyWithFiles} carried file changes). ` +
+      `GitHub charges one API call per commit for its file list, so the time-based views cover this window.`;
+    if (info.historyBounded && !token()) note += " Add a token to widen it.";
     notes.push(note);
   } else {
     notes.push("No commit history was reconstructed, so the time-based views are empty.");
   }
-  if (info.treeTruncated) {
-    notes.push("The repository tree was too large for one request and is truncated, so some files may be missing.");
-  }
-  if (info.cappedCode > 0) {
-    notes.push(`${info.cappedCode} code file${info.cappedCode === 1 ? "" : "s"} beyond the ${MAX_CODE_FILES}-file cap were skipped.`);
-  }
-  if (info.skippedLarge > 0) {
-    notes.push(`${info.skippedLarge} oversized file${info.skippedLarge === 1 ? "" : "s"} were skipped.`);
-  }
+  if (info.treeTruncated) notes.push("The repository tree was too large for one request and is truncated, so some files may be missing.");
+  if (info.cappedCode > 0) notes.push(`${info.cappedCode} code file${info.cappedCode === 1 ? "" : "s"} beyond the anonymous ${limits().maxCodeFiles}-file cap were skipped. Add a token to include them all.`);
+  if (info.skippedLarge > 0) notes.push(`${info.skippedLarge} oversized file${info.skippedLarge === 1 ? "" : "s"} were skipped.`);
+
   const noteEl = $("history-note");
   noteEl.textContent = notes.join(" ");
   show(noteEl);
 
-  const frame = $("atlas-frame");
-  frame.srcdoc = html;
+  $("atlas-frame").srcdoc = html;
   show($("result"));
   $("result").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function openInTab() {
-  const blob = new Blob([currentHtml], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(new Blob([currentHtml], { type: "text/html" }));
   window.open(url, "_blank", "noopener");
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 function downloadHtml() {
-  const blob = new Blob([currentHtml], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(new Blob([currentHtml], { type: "text/html" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = `${currentName}.atlas.html`;
@@ -528,36 +413,30 @@ function showError(message) {
 
 function renderExamples() {
   const box = $("examples");
-  box.innerHTML = "<span class=\"ex-label\">try:</span>";
+  box.innerHTML = '<span class="ex-label">try:</span>';
   for (const name of EXAMPLE_REPOS) {
     const b = document.createElement("button");
     b.className = "ex-chip";
     b.type = "button";
     b.textContent = name;
-    b.addEventListener("click", () => {
-      $("repo").value = name;
-      renderRepo(name);
-    });
+    b.addEventListener("click", () => { $("repo").value = name; renderRepo(name); });
     box.appendChild(b);
   }
 }
 
 function boot() {
   renderExamples();
-  onAuthChanged();
+  updateTokenUI();
 
-  $("signin").addEventListener("click", startSignIn);
-  $("signout").addEventListener("click", signOut);
-  $("repo-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    renderRepo($("repo").value);
+  $("repo-form").addEventListener("submit", (e) => { e.preventDefault(); renderRepo($("repo").value); });
+  $("token-save").addEventListener("click", () => {
+    const t = $("token").value.trim();
+    if (t) { setToken(t); $("token").value = ""; updateTokenUI(); }
   });
+  $("token-clear").addEventListener("click", () => { clearToken(); $("token").value = ""; updateTokenUI(); });
   $("open-tab").addEventListener("click", openInTab);
   $("download").addEventListener("click", downloadHtml);
-  $("close-atlas").addEventListener("click", () => {
-    hide($("result"));
-    $("atlas-frame").srcdoc = "";
-  });
+  $("close-atlas").addEventListener("click", () => { hide($("result")); $("atlas-frame").srcdoc = ""; });
 
   // Warm the WASM engine in the background so the first render is instant.
   init().then(() => { wasmReady = true; }).catch(() => {});

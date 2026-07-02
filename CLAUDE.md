@@ -18,8 +18,9 @@ A Cargo workspace. The engine is pure so it also runs in the browser via WASM.
   clap, `main`/`run`, and every `--flag` emitter. Does all IO, then calls the core.
 - `crates/atlas-wasm` (lib, cdylib) — wasm-bindgen shim exposing `render(json)`
   for the web app. Excluded from the default host build; built with wasm-pack.
-- `web/` — the GitHub Pages app (`web/app`) and the OAuth token worker
-  (`web/auth-worker`).
+- `web/app` — the GitHub Pages app: renders any public repo client-side, no
+  sign-in and no server (an optional GitHub token, kept in the browser, raises
+  the rate limit).
 - `plugin.toml` — declares the `atlas` command (binary `target/release/fledge-atlas`).
 
 ## Pipeline (one model, two outputs)

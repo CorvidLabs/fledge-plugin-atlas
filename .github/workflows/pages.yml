@@ -48,13 +48,6 @@ jobs:
       - name: Build WASM into web/app/pkg
         run: wasm-pack build crates/atlas-wasm --target web --release --out-dir web/app/pkg --out-name atlas
 
-      # Optional: set the repo variable ATLAS_WORKER_ORIGIN to your auth worker
-      # origin and it is baked into config.js at deploy time (no file edit needed).
-      - name: Inject auth worker origin
-        if: ${{ vars.ATLAS_WORKER_ORIGIN != '' }}
-        run: |
-          sed -i "s#https://atlas-auth.REPLACE.workers.dev#${{ vars.ATLAS_WORKER_ORIGIN }}#" web/app/config.js
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

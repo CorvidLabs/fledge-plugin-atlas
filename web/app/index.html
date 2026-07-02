@@ -3,12 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Atlas — any GitHub repo as an interactive map</title>
-<meta name="description" content="Render any GitHub repository as an interactive HTML atlas: spec coverage, code graph, dependency DAG, and history. Runs entirely in your browser.">
+<title>Atlas - any GitHub repo as an interactive map</title>
+<meta name="description" content="Render any public GitHub repository as an interactive HTML atlas: spec coverage, code graph, dependency DAG, and history. Runs entirely in your browser, no sign-in.">
 <link rel="stylesheet" href="./app.css">
-<!-- Deployment config: set your auth worker origin here. Loaded as a plain
-     global before the app module so it is easy to edit in a static deploy. -->
-<script src="./config.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -22,51 +19,21 @@
     </svg>
     <span class="brandname">atlas</span>
   </div>
-  <div class="topbar-right">
-    <span id="rate" class="rate" hidden></span>
-    <button id="signout" class="btn" hidden>Sign out</button>
-  </div>
+  <span id="rate" class="rate" hidden></span>
 </header>
 
 <main id="main" class="wrap">
 
-  <!-- ---- Intro / sign-in ---- -->
-  <section id="gate" class="gate">
-    <p class="kicker">Client-side. Your token stays in your browser.</p>
+  <section class="hero">
+    <p class="kicker">Runs entirely in your browser. No sign-in.</p>
     <h1>See any GitHub repo as a living map.</h1>
     <p class="lede">
       Atlas reads a project's specs, source, and git history and draws one
       interactive picture: a spec and code graph, a coverage treemap and
       sunburst, a dependency DAG, a churn-vs-coverage view, and more. The whole
-      engine is compiled to WebAssembly and runs here in the page. No server
-      sees your code.
+      engine is compiled to WebAssembly and runs right here on the page.
     </p>
 
-    <div id="signin-card" class="card signin" hidden>
-      <h2>Sign in with GitHub</h2>
-      <p class="muted">
-        A short OAuth popup returns a token to this page (and nowhere else). It
-        unlocks your public and private repositories at the full 5,000 requests
-        per hour.
-      </p>
-      <button id="signin" class="btn primary big">Sign in with GitHub</button>
-      <p id="signin-note" class="note"></p>
-    </div>
-
-    <div id="config-missing" class="card warnbox" hidden>
-      <h2>Auth worker not configured</h2>
-      <p class="muted">
-        Set <code>workerOrigin</code> in <code>config.js</code> to your deployed
-        auth worker origin (for example
-        <code>https://atlas-auth.your-subdomain.workers.dev</code>), then reload.
-        See <code>web/auth-worker/README.md</code> for the one-time setup.
-      </p>
-    </div>
-  </section>
-
-  <!-- ---- Repo picker (shown once authed) ---- -->
-  <section id="picker" class="picker" hidden>
-    <label class="fieldlabel" for="repo">Repository</label>
     <form id="repo-form" class="repo-row">
       <input id="repo" name="repo" type="text" autocomplete="off" spellcheck="false"
              placeholder="owner/repo  or  https://github.com/owner/repo"
@@ -74,14 +41,32 @@
       <button id="go" class="btn primary" type="submit">Render atlas</button>
     </form>
     <p class="picker-hint">
-      Try a small public repo first. Atlas fetches the file tree, the source it
-      recognizes, and recent history, then draws the map. Repos with no specs
-      still get a treemap, language mix, and orphan clusters.
+      Works on any public repository. Repos with no specs still get a treemap,
+      language mix, and orphan clusters.
     </p>
     <div id="examples" class="examples" aria-label="Examples"></div>
+
+    <details class="token-adv">
+      <summary>Private repo, or hitting rate limits? Add a token (optional)</summary>
+      <div class="token-body">
+        <p class="muted">
+          Anonymous requests share GitHub's 60-per-hour limit. Paste a
+          <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">personal access token</a>
+          (classic, with <code>repo</code> scope for private repos, or no scope
+          for public) to get 5,000 per hour. It is stored only in this browser
+          and sent only to api.github.com.
+        </p>
+        <div class="token-row">
+          <input id="token" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="ghp_... (optional)" aria-label="GitHub personal access token (optional)">
+          <button id="token-save" class="btn" type="button">Save</button>
+          <button id="token-clear" class="btn" type="button">Clear</button>
+        </div>
+        <p id="token-note" class="note"></p>
+      </div>
+    </details>
   </section>
 
-  <!-- ---- Progress + errors ---- -->
   <section id="status" class="status" hidden aria-live="polite">
     <div class="statusline">
       <span class="spinner" aria-hidden="true"></span>
@@ -92,7 +77,6 @@
 
   <div id="error" class="errorbox" hidden role="alert"></div>
 
-  <!-- ---- Rendered atlas ---- -->
   <section id="result" class="result" hidden>
     <div class="result-head">
       <div>
