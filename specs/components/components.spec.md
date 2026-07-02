@@ -3,7 +3,7 @@ module: components
 version: 1
 status: active
 files:
-  - src/components.js
+  - crates/atlas-core/src/components.js
 
 db_tables: []
 depends_on:

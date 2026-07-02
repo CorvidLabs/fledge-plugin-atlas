@@ -3,7 +3,7 @@ module: depgraph
 version: 1
 status: active
 files:
-  - src/depgraph.js
+  - crates/atlas-core/src/depgraph.js
 
 db_tables: []
 depends_on:

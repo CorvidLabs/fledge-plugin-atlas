@@ -3,7 +3,7 @@ module: style
 version: 1
 status: active
 files:
-  - src/style.css
+  - crates/atlas-core/src/style.css
 
 db_tables: []
 depends_on: []

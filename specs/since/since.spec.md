@@ -3,7 +3,7 @@ module: since
 version: 1
 status: active
 files:
-  - src/since.js
+  - crates/atlas-core/src/since.js
 
 db_tables: []
 depends_on:
