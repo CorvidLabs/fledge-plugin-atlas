@@ -47,8 +47,8 @@ runs:
       run: |
         repo=https://github.com/CorvidLabs/fledge-plugin-atlas
         install() { cargo install --locked --git "$repo" --bin fledge-atlas "$@" fledge-plugin-atlas; }
-        # A ref may be a tag or a branch; try tag first, then branch.
-        install --tag "$REF" || install --branch "$REF"
+        # A ref may be a tag, a branch, or a pinned commit SHA; try each in turn.
+        install --tag "$REF" || install --branch "$REF" || install --rev "$REF"
 
     - name: Render atlas
       id: render
