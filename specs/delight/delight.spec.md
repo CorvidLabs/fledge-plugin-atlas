@@ -3,7 +3,7 @@ module: delight
 version: 1
 status: active
 files:
-  - src/delight.js
+  - crates/atlas-core/src/delight.js
 
 db_tables: []
 depends_on:

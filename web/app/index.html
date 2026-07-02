@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas - any GitHub repo as an interactive map</title>
+<meta name="description" content="Render any public GitHub repository as an interactive HTML atlas: spec coverage, code graph, dependency DAG, and history. Runs entirely in your browser, no sign-in.">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 64 64" role="img" aria-label="CorvidLabs">
+      <circle class="mark-body" cx="24" cy="32" r="18"></circle>
+      <path class="mark-beak" d="M33 21.5 L58.5 29.5 L33 39.5 Z"></path>
+      <circle class="mark-eye" cx="27.5" cy="26" r="3.4"></circle>
+    </svg>
+    <span class="brandname">atlas</span>
+  </div>
+  <span id="rate" class="rate" hidden></span>
+</header>
+
+<main id="main" class="wrap">
+
+  <section class="hero">
+    <p class="kicker">Runs entirely in your browser. No sign-in.</p>
+    <h1>See any GitHub repo as a living map.</h1>
+    <p class="lede">
+      Atlas reads a project's specs, source, and git history and draws one
+      interactive picture: a spec and code graph, a coverage treemap and
+      sunburst, a dependency DAG, a churn-vs-coverage view, and more. The whole
+      engine is compiled to WebAssembly and runs right here on the page.
+    </p>
+
+    <form id="repo-form" class="repo-row">
+      <input id="repo" name="repo" type="text" autocomplete="off" spellcheck="false"
+             placeholder="owner/repo  or  https://github.com/owner/repo"
+             aria-label="GitHub repository (owner/repo or full URL)">
+      <button id="go" class="btn primary" type="submit">Render atlas</button>
+    </form>
+    <p class="picker-hint">
+      Works on any public repository. Repos with no specs still get a treemap,
+      language mix, and orphan clusters.
+    </p>
+    <div id="examples" class="examples" aria-label="Examples"></div>
+
+    <details class="token-adv">
+      <summary>Private repo, or hitting rate limits? Add a token (optional)</summary>
+      <div class="token-body">
+        <p class="muted">
+          Anonymous requests share GitHub's 60-per-hour limit. Paste a
+          <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">personal access token</a>
+          (classic, with <code>repo</code> scope for private repos, or no scope
+          for public) to get 5,000 per hour. It is stored only in this browser
+          and sent only to api.github.com.
+        </p>
+        <div class="token-row">
+          <input id="token" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="ghp_... (optional)" aria-label="GitHub personal access token (optional)">
+          <button id="token-save" class="btn" type="button">Save</button>
+          <button id="token-clear" class="btn" type="button">Clear</button>
+        </div>
+        <p id="token-note" class="note"></p>
+      </div>
+    </details>
+  </section>
+
+  <section id="status" class="status" hidden aria-live="polite">
+    <div class="statusline">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="status-text">Working...</span>
+    </div>
+    <div id="status-detail" class="status-detail"></div>
+  </section>
+
+  <div id="error" class="errorbox" hidden role="alert"></div>
+
+  <section id="result" class="result" hidden>
+    <div class="result-head">
+      <div>
+        <span class="result-repo" id="result-repo"></span>
+        <span class="result-meta" id="result-meta"></span>
+      </div>
+      <div class="result-actions">
+        <button id="open-tab" class="btn">Open in new tab</button>
+        <button id="download" class="btn">Download HTML</button>
+        <button id="close-atlas" class="btn">Close</button>
+      </div>
+    </div>
+    <p id="history-note" class="history-note" hidden></p>
+    <iframe id="atlas-frame" class="atlas-frame" title="Rendered atlas"
+            sandbox="allow-scripts allow-popups allow-downloads"
+            referrerpolicy="no-referrer"></iframe>
+  </section>
+
+</main>
+
+<footer class="sitefoot">
+  <span>Built with <code>fledge atlas</code>.</span>
+  <span>Analysis and rendering run entirely client-side in WebAssembly.</span>
+</footer>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

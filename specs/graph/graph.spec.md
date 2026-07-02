@@ -3,7 +3,7 @@ module: graph
 version: 1
 status: active
 files:
-  - src/graph.js
+  - crates/atlas-core/src/graph.js
 
 db_tables: []
 depends_on:

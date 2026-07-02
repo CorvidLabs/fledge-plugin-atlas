@@ -1,9 +1,10 @@
 ---
 module: engine
-version: 1
+version: 2
 status: active
 files:
-  - src/main.rs
+  - crates/atlas-core/src/lib.rs
+  - crates/atlas-cli/src/main.rs
 
 db_tables: []
 depends_on: []
@@ -29,10 +30,23 @@ never disagree. The same `Model` also backs the `.3md` deck and timeline, the
 `--review`, `--spec`, `--owns`, `--since`, `--gaps`, and `--scaffold` agent
 surfaces, and the deterministic `action_plan`.
 
+## Layout
+
+The engine is a Cargo workspace so it can run both as a CLI and in the browser:
+
+- `atlas-core` (`crates/atlas-core/src/lib.rs`) is the pure engine: all data
+  types, `parse_spec_str`, `attach_specs`, `attach_coverage_str`,
+  `build_git_data`, `build_model`, and `render_html(&Model)`. It has no `std::fs`,
+  `std::process`, `std::net`, or `Command`, and compiles to
+  `wasm32-unknown-unknown`. The atlas assets are embedded here via `include_str!`.
+- `atlas-cli` (`crates/atlas-cli/src/main.rs`) is the binary `fledge-atlas`: it
+  does all IO (filesystem walks, git mining, clap, the `--flag` emitters) and
+  then calls the core. Its behavior is unchanged from the pre-split binary.
+
 ## Public API
 
-`fledge-atlas` is a binary, so its public contract is the CLI plus the pipeline
-functions and types that shape the `Model`.
+The public contract is the CLI, plus the pure pipeline functions and types in
+`atlas-core` that shape the `Model`.
 
 ### CLI Flags
 
@@ -53,14 +67,19 @@ functions and types that shape the `Model`.
 
 ### Pipeline Functions
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `load_specs` | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor) and parse every `*.spec.md`, sorted by module. |
-| `load_sources` | `fn(&Path) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS` and generated/minified/vendored files. |
-| `attach_coverage` | `fn(&Path, &mut [Source])` | Find an lcov report in the usual places and attach per-file (lines hit, lines found). Silent no-op when none exists. |
-| `attach_specs` | `fn(&Path, &[Spec], &mut [Source]) -> Coverage` | Map each spec's `files:` onto sources, tally coverage, orphans, overlap, non-code governed files, and phantoms. |
-| `build_model` | `fn(&str, &[Spec], &[Source], &Coverage, Option<&GitData>) -> Model` | Fold specs, sources, coverage, and git history into the single serializable `Model`. |
-| `render_html` | `fn(&Path, &Model) -> Result<String>` | Render the self-contained HTML atlas, embedding the same `Model` JSON that `--json` prints. |
+The pure functions live in `atlas-core`; the CLI (`atlas-cli`) does the IO that
+feeds them (walking the tree, reading files and lcov, mining `git log`).
+
+| Function | Crate | Signature | Description |
+|----------|-------|-----------|-------------|
+| `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor), parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. |
+| `parse_spec_str` | core | `fn(&str, &str) -> Option<Spec>` | Parse one spec from its relative path and text, rendering its prose to HTML at parse time. Pure. |
+| `load_sources` | cli | `fn(&Path) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS` and generated/minified/vendored files. |
+| `attach_coverage_str` | core | `fn(&str, &str, &mut [Source])` | Parse lcov text and attach per-file (lines hit, lines found). The CLI's `attach_coverage` finds and reads the report first. |
+| `attach_specs` | core | `fn(&[Spec], &mut [Source], &HashSet<String>) -> Coverage` | Map each spec's `files:` onto sources; `existing_paths` is the spec-declared paths that exist, so a governed non-code file is not a phantom. |
+| `build_git_data` | core | `fn(&[CommitInput], &[Spec], &[Source], i64) -> GitData` | Fold a newest-first commit list into update history. The CLI mines the commits from `git log`; the web app from the GitHub API. |
+| `build_model` | core | `fn(&str, &[Spec], &[Source], &Coverage, Option<&GitData>) -> Model` | Fold specs, sources, coverage, and git history into the single serializable `Model`. |
+| `render_html` | core | `fn(&Model) -> Result<String>` | Render the self-contained HTML atlas, embedding the same `Model` JSON that `--json` prints. |
 
 ### Key Types
 
@@ -80,8 +99,10 @@ functions and types that shape the `Model`.
 1. A phantom is a spec-declared path that does not exist on disk. A declared path
    that exists but is not a code extension is a non-code governed file: it counts
    toward the spec's governed files, not toward LOC, and is never a phantom.
-   `attach_specs` calls `root.join(f).exists()` before classifying, so it checks
-   the filesystem and never just the source index.
+   `attach_specs` classifies against `existing_paths` (the spec-declared paths
+   the caller found on disk), so the check is the filesystem and never just the
+   source index. The CLI builds that set by walking the tree; the web app builds
+   it from the repository's path list.
 2. Coverage percentages are lines-of-code based and derived only from real files
    found on disk: `coverage_pct = covered_loc / total_loc * 100`, where
    `covered_loc` sums the LOC of files under at least one spec.
@@ -99,8 +120,9 @@ functions and types that shape the `Model`.
    a valid, emptier atlas rather than an error. The only hard failures are a path
    that does not resolve or is not a directory, an unknown `--since` ref inside a
    real git repo, and an unknown `--spec` module name.
-7. Output is fully self-contained: CSS and JS are embedded with `include_str!`,
-   and there are no external fonts, scripts, or network calls.
+7. Output is fully self-contained: CSS and JS are embedded into `atlas-core`
+   with `include_str!`, and there are no external fonts, scripts, or network
+   calls.
 8. Generated files default to the current working directory, never the analyzed
    project root, which may be read-only or belong to someone else.
 9. The atlas is deterministic for a given repo state: specs sort by module, files
@@ -169,16 +191,17 @@ Then it prints {"note": "no lcov coverage found", "gaps": []} and exits 0,
 
 ## Dependencies
 
-- Rust standard library: `fs`, `path`, `process::Command`, `collections`, `time`.
-- `anyhow` for error context and `bail!`.
-- `clap` (derive) for CLI parsing.
-- `serde` and `serde_json` for the `Model` and all JSON and `.3md` emission.
-- Embedded assets via `include_str!`: `style.css`, `graph.js`, `depgraph.js`,
-  `delight.js`, `components.js`, `threemd.js`, `since.js`.
-- Optional external tools, shelled out best-effort and never required: `git`
-  (update history, `--since`, timeline), `fledge spec check --json` (drift, only
-  when `.specsync/config.toml` exists), and `augur check --json` plus `attest`
-  (the trust panel).
+- `atlas-core`: `anyhow`, `serde` and `serde_json` (the `Model` and all JSON and
+  `.3md` emission), and `std::collections`. No IO crates; it is pure.
+- `atlas-cli`: `atlas-core`, plus `clap` (derive) for the CLI, and the Rust
+  standard library's `fs`, `path`, `process::Command`, and `time` for the IO the
+  core cannot do.
+- Embedded assets via `include_str!` in `atlas-core`: `style.css`, `graph.js`,
+  `depgraph.js`, `delight.js`, `components.js`, `threemd.js`, `since.js`.
+- Optional external tools, shelled out best-effort by the CLI and never
+  required: `git` (update history, `--since`, timeline), `fledge spec check
+  --json` (drift, only when `.specsync/config.toml` exists), and `augur check
+  --json` plus `attest` (the trust panel).
 - depends_on: none. The engine is foundational. The graph, delight, depgraph,
   threemd, since, and components view modules all consume its `Model`, and style
   is its stylesheet.
@@ -188,3 +211,4 @@ Then it prints {"note": "no lcov coverage found", "gaps": []} and exits 0,
 | Version | Date | Changes |
 |---------|------|---------|
 | 1 | 2026-07-01 | Initial spec |
+| 2 | 2026-07-01 | Split into the `atlas-core` (pure) and `atlas-cli` (IO) workspace crates; updated the pipeline signatures (`render_html(&Model)`, `attach_specs` with `existing_paths`, `attach_coverage_str`, `parse_spec_str`, `build_git_data`). |

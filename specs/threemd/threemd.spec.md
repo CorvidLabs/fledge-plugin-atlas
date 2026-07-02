@@ -3,7 +3,7 @@ module: threemd
 version: 1
 status: active
 files:
-  - src/threemd.js
+  - crates/atlas-core/src/threemd.js
 
 db_tables: []
 depends_on:

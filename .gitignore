@@ -1,6 +1,10 @@
 # Build artifacts
 /target/
 /dist/
+# The WASM crate is excluded from the workspace, so it builds to its own target/.
+crates/atlas-wasm/target/
+# wasm-pack output for the web app (built in CI / locally via `fledge build web`).
+web/app/pkg/
 
 # OS
 .DS_Store
