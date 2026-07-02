@@ -301,56 +301,91 @@ async function fetchBlobs(owner, repo, entries, onProgress) {
   return out.filter(Boolean);
 }
 
-// Reconstruct per-commit file lists for recent history. The commits list gives
-// timestamps cheaply; each per-commit detail (for its changed files) is one API
-// call, so we bound the window and report exactly what was covered.
-async function buildHistory(owner, repo, branch, onProgress) {
-  let list;
-  try {
-    const perPage = Math.min(HISTORY_COMMITS, 100);
-    list = await (await gh(
-      `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=${perPage}`
-    )).json();
-  } catch (err) {
-    if (err instanceof RateLimitError) throw err;
-    return { commits: [], info: { historyCovered: 0, historyWithFiles: 0, historyBounded: false } };
-  }
-  if (!Array.isArray(list) || list.length === 0) {
-    return { commits: [], info: { historyCovered: 0, historyWithFiles: 0, historyBounded: false } };
-  }
+// Parse the last page number out of a GitHub `Link` header, so we can estimate
+// the true commit count without walking every page.
+function lastPageFromLink(link) {
+  if (!link) return null;
+  const m = link.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  return m ? parseInt(m[1], 10) : null;
+}
 
-  const shas = list.slice(0, HISTORY_COMMITS).map((c) => c.sha);
-  const commits = new Array(shas.length);
-  let next = 0;
-  let done = 0;
-  let withFiles = 0;
+// Reconstruct history for the atlas's time-based views (activity heat map,
+// contribution calendar, since-you-last-looked, churn-vs-coverage). The commits
+// list gives timestamps cheaply (and, on page one, an estimate of the total via
+// the Link header); the per-commit file lists that classify a day as spec vs
+// code cost one API call each, so that detail is bounded to a fixed window and
+// the exact coverage is surfaced in the UI.
+async function buildHistory(owner, repo, branch, onProgress) {
+  const emptyInfo = {
+    historyCovered: 0, historyWithFiles: 0, historyBounded: false,
+    approxTotal: 0, oldestTs: 0, newestTs: 0,
+  };
+
+  // ---- page the commits list up to the window, capturing timestamps ----
+  const entries = []; // { sha, ts } newest-first
+  let approxTotal = 0;
+  const pages = Math.max(1, Math.ceil(HISTORY_COMMITS / 100));
+  for (let page = 1; page <= pages && entries.length < HISTORY_COMMITS; page++) {
+    let res, list;
+    try {
+      res = await gh(
+        `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=100&page=${page}`
+      );
+      list = await res.json();
+    } catch (err) {
+      if (err instanceof RateLimitError) throw err;
+      break;
+    }
+    if (!Array.isArray(list) || list.length === 0) break;
+    if (page === 1) {
+      const last = lastPageFromLink(res.headers.get("Link"));
+      approxTotal = last ? last * 100 : list.length; // upper-bound estimate
+    }
+    for (const c of list) {
+      const d = c.commit && c.commit.committer && c.commit.committer.date;
+      const ts = d ? Math.floor(Date.parse(d) / 1000) : 0;
+      entries.push({ sha: c.sha, ts });
+    }
+    if (list.length < 100) { approxTotal = entries.length; break; } // reached the end
+  }
+  if (entries.length === 0) return { commits: [], info: emptyInfo };
+
+  const window = entries.slice(0, HISTORY_COMMITS);
+  const commits = new Array(window.length);
+  let next = 0, done = 0, withFiles = 0;
   const CONCURRENCY = 8;
 
   async function worker() {
     while (true) {
       const i = next++;
-      if (i >= shas.length) return;
+      if (i >= window.length) return;
+      const { sha } = window[i];
+      let ts = window[i].ts;
       try {
-        const c = await (await gh(`/repos/${owner}/${repo}/commits/${shas[i]}`)).json();
-        const dateStr =
-          (c.commit && c.commit.committer && c.commit.committer.date) ||
-          (c.commit && c.commit.author && c.commit.author.date);
-        const ts = dateStr ? Math.floor(Date.parse(dateStr) / 1000) : 0;
+        const c = await (await gh(`/repos/${owner}/${repo}/commits/${sha}`)).json();
+        if (!ts) {
+          const d =
+            (c.commit && c.commit.committer && c.commit.committer.date) ||
+            (c.commit && c.commit.author && c.commit.author.date);
+          ts = d ? Math.floor(Date.parse(d) / 1000) : 0;
+        }
         const fileList = (c.files || []).map((f) => f.filename).filter(Boolean);
         if (fileList.length) withFiles++;
         commits[i] = { ts, files: fileList };
       } catch (err) {
         if (err instanceof RateLimitError) throw err;
-        commits[i] = { ts: 0, files: [] };
+        // Keep the timestamp even if the file list could not be fetched, so the
+        // commit still contributes to volume-based views.
+        commits[i] = { ts, files: [] };
       }
       done++;
-      if (done % 10 === 0 || done === shas.length) {
-        onProgress("Reconstructing history from commits...", `${done} of ${shas.length} commits`);
+      if (done % 10 === 0 || done === window.length) {
+        onProgress("Reconstructing history from commits...", `${done} of ${window.length} commits`);
       }
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, shas.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, window.length) }, worker));
 
   // Newest-first, matching git log order, dropping any that failed to date.
   const cleaned = commits.filter((c) => c && c.ts > 0);
@@ -360,7 +395,10 @@ async function buildHistory(owner, repo, branch, onProgress) {
     info: {
       historyCovered: cleaned.length,
       historyWithFiles: withFiles,
-      historyBounded: list.length >= HISTORY_COMMITS,
+      historyBounded: approxTotal > cleaned.length,
+      approxTotal: Math.max(approxTotal, cleaned.length),
+      oldestTs: cleaned.length ? cleaned[cleaned.length - 1].ts : 0,
+      newestTs: cleaned.length ? cleaned[0].ts : 0,
     },
   };
 }
@@ -426,17 +464,23 @@ function showResult(html, parsed, info) {
 
   // Be honest about history coverage and any caps that were hit.
   const notes = [];
+  const ymd = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
   if (info.historyCovered > 0) {
-    notes.push(
-      `History covers the last ${info.historyCovered} commit${info.historyCovered === 1 ? "" : "s"} ` +
-      `(${info.historyWithFiles} with file changes). Per-commit file lists cost one API call each, ` +
-      `so older history is not included.`
-    );
+    const ofTotal = info.historyBounded ? ` of about ${info.approxTotal}` : "";
+    const span = info.oldestTs && info.newestTs
+      ? ` spanning ${ymd(info.oldestTs)} to ${ymd(info.newestTs)}`
+      : "";
+    let note =
+      `History is reconstructed from the last ${info.historyCovered}${ofTotal} commit` +
+      `${info.historyCovered === 1 ? "" : "s"}${span} ` +
+      `(${info.historyWithFiles} carried file changes). GitHub charges one API call per commit ` +
+      `for its file list, so the time-based views cover this window; older history is not shown.`;
+    if (info.historyBounded) {
+      note += ` Raise historyCommits in config.js to widen it.`;
+    }
+    notes.push(note);
   } else {
-    notes.push("No commit history was reconstructed, so time-based views are empty.");
-  }
-  if (info.historyBounded) {
-    notes.push(`The history window is capped at ${HISTORY_COMMITS} commits.`);
+    notes.push("No commit history was reconstructed, so the time-based views are empty.");
   }
   if (info.treeTruncated) {
     notes.push("The repository tree was too large for one request and is truncated, so some files may be missing.");
