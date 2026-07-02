@@ -1,0 +1,72 @@
+name: Deploy atlas web app
+
+# Builds the WASM engine and publishes web/app to GitHub Pages. Enable Pages for
+# the repo (Settings -> Pages -> Source: GitHub Actions) once, then every push to
+# main that touches the engine or the app redeploys.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "web/app/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/atlas-wasm/target
+          key: wasm-${{ runner.os }}-${{ hashFiles('crates/atlas-wasm/Cargo.lock', 'crates/atlas-core/**/*.rs') }}
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM into web/app/pkg
+        run: wasm-pack build crates/atlas-wasm --target web --release --out-dir web/app/pkg --out-name atlas
+
+      # Optional: set the repo variable ATLAS_WORKER_ORIGIN to your auth worker
+      # origin and it is baked into config.js at deploy time (no file edit needed).
+      - name: Inject auth worker origin
+        if: ${{ vars.ATLAS_WORKER_ORIGIN != '' }}
+        run: |
+          sed -i "s#https://atlas-auth.REPLACE.workers.dev#${{ vars.ATLAS_WORKER_ORIGIN }}#" web/app/config.js
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/app
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

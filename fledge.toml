@@ -6,3 +6,5 @@ build = "cargo build --release"
 test = "cargo test"
 lint = "cargo clippy -- -D warnings"
 fmt = "cargo fmt --check"
+# Build the WASM engine into the web app (needs wasm-pack + the wasm32 target).
+web = "wasm-pack build crates/atlas-wasm --target web --release --out-dir web/app/pkg --out-name atlas"

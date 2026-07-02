@@ -177,7 +177,11 @@ fn run() -> Result<()> {
             .unwrap_or_else(|| cwd.join(format!("{project}.timeline.3md")));
         let (doc, weeks) = render_3md_timeline(&root, &specs, &sources, &model);
         fs::write(&out, doc).with_context(|| format!("writing {}", out.display()))?;
-        println!("3md timeline: {} planes ({} active weeks)", weeks + 1, weeks);
+        println!(
+            "3md timeline: {} planes ({} active weeks)",
+            weeks + 1,
+            weeks
+        );
         println!("wrote {}", out.display());
         return Ok(());
     }
@@ -328,7 +332,12 @@ fn emit_since(root: &Path, specs: &[Spec], model: &Model, reference: &str) -> Re
         let valid = Command::new("git")
             .arg("-C")
             .arg(root)
-            .args(["rev-parse", "--verify", "--quiet", &format!("{reference}^{{commit}}")])
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{reference}^{{commit}}"),
+            ])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
@@ -616,7 +625,12 @@ struct WeekBucket {
 /// Each week summarizes its commits, the specs it moved, and running totals, so
 /// scrubbing the Z axis walks the project forward through time. Non-git projects
 /// (or repos with no history) get a single plane saying so.
-fn render_3md_timeline(root: &Path, specs: &[Spec], sources: &[Source], model: &Model) -> (String, usize) {
+fn render_3md_timeline(
+    root: &Path,
+    specs: &[Spec],
+    sources: &[Source],
+    model: &Model,
+) -> (String, usize) {
     // A spec's footprint: every path whose change counts as "this spec moved",
     // plus the sets that classify a commit as a spec update, a code update, or
     // both. Mirrors `load_git`, so the two passes agree on what counts.
@@ -668,10 +682,10 @@ fn render_3md_timeline(root: &Path, specs: &[Spec], sources: &[Source], model: &
         let mut have_commit = false;
 
         let close = |ts: i64,
-                         specs: &std::collections::BTreeSet<usize>,
-                         ts_spec: bool,
-                         ts_code: bool,
-                         weeks: &mut BTreeMap<(i64, i64), WeekBucket>| {
+                     specs: &std::collections::BTreeSet<usize>,
+                     ts_spec: bool,
+                     ts_code: bool,
+                     weeks: &mut BTreeMap<(i64, i64), WeekBucket>| {
             if ts <= 0 {
                 return;
             }
@@ -739,8 +753,10 @@ fn render_3md_timeline(root: &Path, specs: &[Spec], sources: &[Source], model: &
     let ordered: Vec<((i64, i64), &WeekBucket)> = weeks.iter().map(|(k, v)| (*k, v)).collect();
     let plane_count = ordered.len();
     let total_commits: usize = ordered.iter().map(|(_, b)| b.commits).sum();
-    let all_specs: std::collections::BTreeSet<usize> =
-        ordered.iter().flat_map(|(_, b)| b.specs.iter().copied()).collect();
+    let all_specs: std::collections::BTreeSet<usize> = ordered
+        .iter()
+        .flat_map(|(_, b)| b.specs.iter().copied())
+        .collect();
     let (first_key, first_b) = ordered[0];
     let (last_key, last_b) = ordered[plane_count - 1];
     let label_of = |key: (i64, i64)| format!("{:04}-W{:02}", key.0, key.1);
@@ -878,12 +894,20 @@ fn render_3md_timeline(root: &Path, specs: &[Spec], sources: &[Source], model: &
         // Cross-link prev / next for a scrubbable prev/next feel.
         let mut nav: Vec<String> = Vec::new();
         if z > 1 {
-            nav.push(format!("Prev [[z={}|{}]]", z - 1, label_of(ordered[i - 1].0)));
+            nav.push(format!(
+                "Prev [[z={}|{}]]",
+                z - 1,
+                label_of(ordered[i - 1].0)
+            ));
         } else {
             nav.push("[[z=0|Overview]]".to_string());
         }
         if i + 1 < plane_count {
-            nav.push(format!("Next [[z={}|{}]]", z + 1, label_of(ordered[i + 1].0)));
+            nav.push(format!(
+                "Next [[z={}|{}]]",
+                z + 1,
+                label_of(ordered[i + 1].0)
+            ));
         }
         d.push_str(&nav.join(" · "));
         d.push('\n');
@@ -1495,8 +1519,14 @@ mod tests {
     #[test]
     fn rel_strips_root_prefix() {
         let root = PathBuf::from("/a/b");
-        assert_eq!(rel(&root, &PathBuf::from("/a/b/src/main.rs")), "src/main.rs");
-        assert_eq!(rel(&root, &PathBuf::from("/elsewhere/x.rs")), "/elsewhere/x.rs");
+        assert_eq!(
+            rel(&root, &PathBuf::from("/a/b/src/main.rs")),
+            "src/main.rs"
+        );
+        assert_eq!(
+            rel(&root, &PathBuf::from("/elsewhere/x.rs")),
+            "/elsewhere/x.rs"
+        );
     }
 
     #[test]
@@ -1550,10 +1580,16 @@ mod tests {
             "---\nmodule: bar\nstatus: active\nversion: 1\nfiles:\n  - src/bar.rs\n  - src/shared.rs\n  - src/missing.rs\n  - docs/NOTES.md\n---\n# bar\n## Purpose\nx\n");
         w("specs/baz/baz.spec.md",
             "---\nmodule: baz\nstatus: active\nversion: 1\nfiles:\n  - src/shared.rs\ndepends_on:\n  - foo\n---\n# baz\n## Purpose\nx\n");
-        w("src/foo.rs", "pub fn foo() -> u32 { 1 }\npub fn foo2() -> u32 { 2 }\n");
+        w(
+            "src/foo.rs",
+            "pub fn foo() -> u32 { 1 }\npub fn foo2() -> u32 { 2 }\n",
+        );
         w("src/bar.rs", "pub fn bar() -> u32 { 3 }\n");
         w("src/shared.rs", "pub fn shared() -> u32 { 4 }\n");
-        w("src/orphan.rs", "pub fn orphan() -> u32 { 5 }\npub fn orphan2() {}\n");
+        w(
+            "src/orphan.rs",
+            "pub fn orphan() -> u32 { 5 }\npub fn orphan2() {}\n",
+        );
         w("docs/NOTES.md", "# notes\nnon-code governed file\n");
         d
     }
@@ -1572,11 +1608,18 @@ mod tests {
         let root = fixture();
         let (specs, sources, cov) = analyze(&root);
         assert_eq!(specs.len(), 3, "three specs discovered");
-        assert_eq!(sources.len(), 4, "four code files (docs/NOTES.md is not code)");
+        assert_eq!(
+            sources.len(),
+            4,
+            "four code files (docs/NOTES.md is not code)"
+        );
         assert_eq!(cov.covered_files, 3, "foo, bar, shared are covered");
         assert_eq!(cov.orphan_files, 1, "orphan.rs has no spec");
         assert_eq!(cov.overlap_files, 1, "shared.rs is governed by bar and baz");
-        assert!(cov.total_loc > cov.covered_loc, "orphan LOC keeps coverage under 100%");
+        assert!(
+            cov.total_loc > cov.covered_loc,
+            "orphan LOC keeps coverage under 100%"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1586,9 +1629,14 @@ mod tests {
         let (_specs, _sources, cov) = analyze(&root);
         let phantoms: Vec<&String> = cov.phantoms.iter().flatten().collect();
         assert_eq!(phantoms.len(), 1, "exactly one phantom");
-        assert!(phantoms.iter().any(|p| p.ends_with("missing.rs")), "the missing path is the phantom");
-        assert!(!phantoms.iter().any(|p| p.contains("NOTES.md")),
-            "an existing non-code file is governed, not a phantom");
+        assert!(
+            phantoms.iter().any(|p| p.ends_with("missing.rs")),
+            "the missing path is the phantom"
+        );
+        assert!(
+            !phantoms.iter().any(|p| p.contains("NOTES.md")),
+            "an existing non-code file is governed, not a phantom"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1609,10 +1657,19 @@ mod tests {
         let bar = model.specs.iter().find(|s| s.module == "bar").unwrap();
         assert_eq!(bar.noncode_files, 1, "bar governs one non-code file");
         let baz = model.specs.iter().find(|s| s.module == "baz").unwrap();
-        assert!(baz.depends_on.iter().any(|d| d == "foo"), "baz depends on foo");
+        assert!(
+            baz.depends_on.iter().any(|d| d == "foo"),
+            "baz depends on foo"
+        );
         let foo = model.specs.iter().find(|s| s.module == "foo").unwrap();
-        assert!(foo.dependents.iter().any(|d| d == "baz"), "foo is depended on by baz");
-        assert!(serde_json::to_string(&model).is_ok(), "the --json surface serializes");
+        assert!(
+            foo.dependents.iter().any(|d| d == "baz"),
+            "foo is depended on by baz"
+        );
+        assert!(
+            serde_json::to_string(&model).is_ok(),
+            "the --json surface serializes"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1625,9 +1682,14 @@ mod tests {
         let html = render_html(&model).unwrap();
         assert!(html.contains("fixture"), "the project name is in the page");
         assert!(html.contains("atlas-data"), "the model JSON is embedded");
-        assert!(html.contains("foo") && html.contains("bar") && html.contains("baz"),
-            "every spec module appears");
-        assert!(html.contains("<style") && html.contains("<script"), "styles and scripts are inline");
+        assert!(
+            html.contains("foo") && html.contains("bar") && html.contains("baz"),
+            "every spec module appears"
+        );
+        assert!(
+            html.contains("<style") && html.contains("<script"),
+            "styles and scripts are inline"
+        );
         // Self-contained: no external stylesheet, script, or web font is fetched.
         assert!(!html.contains("<link "), "no external <link>");
         assert!(!html.contains("<script src="), "no external <script src>");
@@ -1642,13 +1704,23 @@ mod tests {
         let sf = root.join("src/foo.rs");
         fs::write(
             root.join("lcov.info"),
-            format!("SF:{}\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nend_of_record\n", sf.to_string_lossy()),
+            format!(
+                "SF:{}\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nend_of_record\n",
+                sf.to_string_lossy()
+            ),
         )
         .unwrap();
         let mut sources = load_sources(&root);
         attach_coverage(&root, &mut sources);
-        let foo = sources.iter().find(|s| s.rel_path.ends_with("foo.rs")).unwrap();
-        assert_eq!(foo.test, Some((1, 2)), "lcov (hit, found) attaches to the matching source");
+        let foo = sources
+            .iter()
+            .find(|s| s.rel_path.ends_with("foo.rs"))
+            .unwrap();
+        assert_eq!(
+            foo.test,
+            Some((1, 2)),
+            "lcov (hit, found) attaches to the matching source"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

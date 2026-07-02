@@ -182,7 +182,11 @@ pub fn parse_spec_str(rel_path: &str, text: &str) -> Option<Spec> {
     // The body prose rendered once, up front, so producing the atlas never
     // needs to re-read the spec (or touch a filesystem at all).
     let html = markdown_to_html(body);
-    let prose_html = if html.trim().is_empty() { None } else { Some(html) };
+    let prose_html = if html.trim().is_empty() {
+        None
+    } else {
+        Some(html)
+    };
 
     Some(Spec {
         module,
@@ -2929,11 +2933,13 @@ pub fn render_html(m: &Model) -> Result<String> {
             h.push_str("</tr>");
         }
         h.push_str("</tbody></table>");
-        h.push_str("<p class=\"legend hslegend\">\
+        h.push_str(
+            "<p class=\"legend hslegend\">\
 <span class=\"heatkey\" style=\"background:var(--chart-3)\"></span>churn &nbsp; \
 <span class=\"heatkey\" style=\"background:var(--chart-5)\"></span>needs review / no spec &nbsp; \
 <span class=\"heatkey\" style=\"background:var(--chart-2)\"></span>low tests &nbsp; \
-<span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>drift</p>");
+<span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>drift</p>",
+        );
         h.push_str("</section>");
     }
 
@@ -2962,7 +2968,10 @@ pub fn render_html(m: &Model) -> Result<String> {
                 esc(&a.target)
             ));
             h.push_str(&format!("<span class=\"planwhy\">{}</span>", esc(&a.why)));
-            h.push_str(&format!("<code class=\"plancmd\">{}</code>", esc(&a.command)));
+            h.push_str(&format!(
+                "<code class=\"plancmd\">{}</code>",
+                esc(&a.command)
+            ));
             h.push_str("</li>");
         }
         h.push_str("</ol></section>");
@@ -3104,12 +3113,14 @@ pub fn render_html(m: &Model) -> Result<String> {
             h.push_str("</tr>");
         }
         h.push_str("</tbody></table>");
-        h.push_str("<p class=\"legend debtlegend\">\
+        h.push_str(
+            "<p class=\"legend debtlegend\">\
 <span class=\"heatkey\" style=\"background:var(--chart-5)\"></span>needs review &nbsp; \
 <span class=\"heatkey\" style=\"background:var(--chart-3)\"></span>drift &nbsp; \
 <span class=\"heatkey\" style=\"background:var(--chart-2)\"></span>test coverage &nbsp; \
 <span class=\"heatkey\" style=\"background:var(--chart-1)\"></span>staleness &nbsp; \
-<span class=\"heatkey\" style=\"background:var(--chart-4)\"></span>companions</p>");
+<span class=\"heatkey\" style=\"background:var(--chart-4)\"></span>companions</p>",
+        );
         h.push_str("</section>");
     }
 
@@ -3305,9 +3316,7 @@ fn spec_debt(s: &SpecOut, ts_min: Option<i64>, ts_max: Option<i64>) -> SpecDebt<
     let missing = CORE_COMPANIONS.len().saturating_sub(present);
     let comp = (missing as f64 * 3.0).min(15.0);
     let stale = match (s.updated_ts, ts_min, ts_max) {
-        (Some(ts), Some(mn), Some(mx)) if mx > mn => {
-            (mx - ts) as f64 / (mx - mn) as f64 * 15.0
-        }
+        (Some(ts), Some(mn), Some(mx)) if mx > mn => (mx - ts) as f64 / (mx - mn) as f64 * 15.0,
         // Some history exists in the project but not for this spec: maximally stale.
         (None, Some(_), Some(_)) => 15.0,
         _ => 0.0,
@@ -3399,7 +3408,8 @@ mod tests {
 
     #[test]
     fn frontmatter_splits_yaml_from_body() {
-        let (front, body) = split_frontmatter("---\nmodule: x\nfiles:\n  - a.rs\n---\n# Body\ntext");
+        let (front, body) =
+            split_frontmatter("---\nmodule: x\nfiles:\n  - a.rs\n---\n# Body\ntext");
         assert!(front.contains("module: x"));
         assert!(body.contains("# Body"));
     }
@@ -3453,7 +3463,10 @@ mod tests {
         for i in 0..40 {
             let c = spec_color(i);
             assert!(c.contains("--chart-"), "uses a chart token");
-            assert!(!c.to_lowercase().contains("purple"), "house rule: no purple");
+            assert!(
+                !c.to_lowercase().contains("purple"),
+                "house rule: no purple"
+            );
         }
     }
 
@@ -3489,7 +3502,10 @@ mod tests {
         assert_eq!(spec.status, "active");
         assert_eq!(spec.files, vec!["src/main.rs".to_string()]);
         assert_eq!(spec.depends_on, vec!["core".to_string()]);
-        assert!(spec.prose_html.is_some(), "body prose renders at parse time");
+        assert!(
+            spec.prose_html.is_some(),
+            "body prose renders at parse time"
+        );
     }
 
     #[test]
