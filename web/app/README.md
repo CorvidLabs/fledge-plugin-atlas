@@ -31,10 +31,13 @@ browser's `localStorage` and sent only to `api.github.com`. There is no backend.
 ## Build locally
 
 ```
-fledge run web         # or:
+fledge run web         # or, from the repo root:
 wasm-pack build crates/atlas-wasm --target web --release \
-  --out-dir web/app/pkg --out-name atlas
+  --out-dir "$PWD/web/app/pkg" --out-name atlas
 ```
+
+wasm-pack resolves `--out-dir` relative to the crate, so keep the path absolute
+(`$PWD/...`) or the `pkg/` ends up under `crates/atlas-wasm/`.
 
 Then serve this directory over HTTP (module scripts and WASM need a real origin,
 not `file://`):

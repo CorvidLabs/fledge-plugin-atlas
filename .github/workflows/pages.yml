@@ -46,7 +46,13 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build WASM into web/app/pkg
-        run: wasm-pack build crates/atlas-wasm --target web --release --out-dir web/app/pkg --out-name atlas
+        # wasm-pack resolves --out-dir relative to the crate, so it must be
+        # absolute to land under the repo-root web/app that Pages uploads.
+        run: |
+          wasm-pack build crates/atlas-wasm --target web --release \
+            --out-dir "$GITHUB_WORKSPACE/web/app/pkg" --out-name atlas
+          test -f web/app/pkg/atlas.js && test -f web/app/pkg/atlas_bg.wasm \
+            || { echo "::error::wasm pkg missing from web/app/pkg after build"; exit 1; }
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
