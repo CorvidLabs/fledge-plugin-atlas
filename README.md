@@ -279,6 +279,8 @@ so a repo's spec health can live in its README and refresh on every commit:
 fledge atlas --svg coverage   # a verdict card: coverage %, bar, and the counts
 fledge atlas --svg langmix    # the language-mix stacked bar with a legend
 fledge atlas --svg treemap    # the coverage treemap, files sized by LOC
+fledge atlas --svg sunburst   # the directory tree as coverage rings (clay to teal)
+fledge atlas --svg calendar   # a commit-activity grid (spec / code / both)
 ```
 
 Each is a deterministic, browser-free layout (no force graph), so the same model
