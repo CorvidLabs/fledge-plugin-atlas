@@ -55,7 +55,7 @@ jobs:
         run: |
           mkdir -p "$OUT_DIR"
           ./target/release/fledge-atlas . --json > "$ATLAS_JSON"
-          for c in coverage langmix treemap; do
+          for c in coverage langmix treemap sunburst; do
             ./target/release/fledge-atlas . --svg "$c" > "$OUT_DIR/$c.svg"
           done
           node -e '

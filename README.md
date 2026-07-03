@@ -42,7 +42,7 @@ source file, so `fledge atlas` run here reports **100% of the code under a spec,
 [`attest`](https://github.com/CorvidLabs/attest) light up the trust panel when
 they have data; neither is required to build or run the atlas.)
 
-These three cards are **re-rendered on every push to `main`** by the Pages
+These four cards are **re-rendered on every push to `main`** by the Pages
 workflow (`fledge atlas --svg …`) and served from GitHub Pages as standalone
 SVG, so they always reflect the current `main` rather than a saved snapshot:
 
@@ -50,6 +50,7 @@ SVG, so they always reflect the current `main` rather than a saved snapshot:
 <p><img alt="Spec coverage" width="460" src="https://corvidlabs.github.io/fledge-plugin-atlas/badges/coverage.svg"></p>
 <p><img alt="Language mix" width="460" src="https://corvidlabs.github.io/fledge-plugin-atlas/badges/langmix.svg"></p>
 <p><img alt="Coverage treemap" width="460" src="https://corvidlabs.github.io/fledge-plugin-atlas/badges/treemap.svg"></p>
+<p><img alt="Coverage sunburst" width="460" src="https://corvidlabs.github.io/fledge-plugin-atlas/badges/sunburst.svg"></p>
 
 The screenshots that follow show the interactive HTML views (the force-directed
 graph and the trust panel), which the static SVG cards above do not replicate.
