@@ -1,6 +1,6 @@
 ---
 module: engine
-version: 5
+version: 6
 status: active
 files:
   - crates/atlas-core/src/lib.rs
@@ -75,7 +75,8 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 |----------|-------|-----------|-------------|
 | `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor), parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. |
 | `parse_spec_str` | core | `fn(&str, &str) -> Option<Spec>` | Parse one spec from its relative path and text, rendering its prose to HTML at parse time. Pure. |
-| `load_sources` | cli | `fn(&Path) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS` and generated/minified/vendored files. |
+| `load_sources` | cli | `fn(&Path, &IgnoreSet) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS`, generated/minified/vendored files, and any path the `IgnoreSet` scopes out. |
+| `IgnoreSet::parse` / `matches` | core | `fn(&str) -> IgnoreSet`, `fn(&self, &str) -> bool` | Parse an `.atlasignore` file (read from the project root by the CLI) into a per-repo coverage-scope filter, and test a repo-relative path against it. Pattern forms, root-anchored: `dir/` (a directory and its contents), `*.ext` (an extension), or a bare `path` (that exact file, or a directory of that name). Scoped-out files leave the source set entirely, weighing on neither coverage nor orphans. |
 | `attach_coverage_str` | core | `fn(&str, &str, &mut [Source])` | Parse lcov text and attach per-file (lines hit, lines found). The CLI's `attach_coverage` finds and reads the report first. |
 | `attach_specs` | core | `fn(&[Spec], &mut [Source], &HashSet<String>) -> Coverage` | Map each spec's `files:` onto sources; `existing_paths` is the spec-declared paths that exist, so a governed non-code file is not a phantom. |
 | `build_git_data` | core | `fn(&[CommitInput], &[Spec], &[Source], i64) -> GitData` | Fold a newest-first commit list into update history. The CLI mines the commits from `git log`; the web app from the GitHub API. |
@@ -191,6 +192,16 @@ Then it reports the file as excluded (file: null, on_disk: true, excluded: true,
      `matches` as hints, instead of silently returning one of them as the file.
 ```
 
+```
+Given a project with an `.atlasignore` at its root containing `Tests/` and
+     `Package.swift`
+When `fledge-atlas .` runs
+Then every file under Tests/ and the Package.swift manifest leave the source
+     set, so they count toward neither coverage nor orphans; the CLI notes on
+     stderr that scope is limited by .atlasignore, and the coverage percentage
+     reflects only the code the specs are meant to govern.
+```
+
 ## Error Cases
 
 | Error | When | Behavior |
@@ -237,3 +248,4 @@ Then it reports the file as excluded (file: null, on_disk: true, excluded: true,
 | 3 | 2026-07-02 | Added `render_svg(&Model, component)` and the `--svg` flag: standalone, deterministic SVG for the `coverage`, `langmix`, and `treemap` components, for embedding as living README images and via the composite GitHub Action. |
 | 4 | 2026-07-03 | `--owns` now reports a real on-disk file the atlas excludes (generated, skipped-dir, or non-code) as `excluded` with a plain `reason`, instead of silently returning a same-named governed cousin. |
 | 5 | 2026-07-03 | Added two more `--svg` components: `sunburst` (the directory tree as coverage rings, tinted clay-to-teal, with the overall percentage in the center) and `calendar` (a GitHub-style commit-activity grid colored spec/code/both), rounding out the deterministic, browser-free component set. |
+| 6 | 2026-07-03 | Added `IgnoreSet` and `.atlasignore` support: a project can scope the coverage denominator (test trees, generated output, a marketing site) with a small root-anchored ignore file, so the percentage reflects the code its specs are actually meant to govern. `load_sources` now takes an `&IgnoreSet`. |

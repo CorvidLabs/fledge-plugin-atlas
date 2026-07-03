@@ -179,6 +179,12 @@ Scrub the Z axis to walk the project forward through time.
 - **Source**: the real tree is walked for code files (Rust, TS/JS, Swift, Python,
   Go, Kotlin, Java, Ruby, PHP, C/C++, C#, Objective-C). Build and vendor trees
   (`target`, `node_modules`, `dist`, …) are skipped.
+- **Scope** (optional): drop an `.atlasignore` at the repo root to keep paths out
+  of the coverage denominator — a test tree, generated output, a marketing site —
+  so the percentage reflects the code your specs are meant to govern. It is a
+  small, root-anchored subset of gitignore: `Tests/` (a directory), `*.md` (an
+  extension), or `Package.swift` (an exact file). Scoped-out files count toward
+  neither coverage nor orphans.
 - **Drift**: where a `.specsync/config.toml` exists, `fledge spec check` is used
   to annotate specs with their sync verdict.
 - **Test coverage** (optional): the first lcov report found among `lcov.info`,
