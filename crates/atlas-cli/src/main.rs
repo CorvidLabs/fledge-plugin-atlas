@@ -27,8 +27,8 @@ use atlas_core::{
     attach_coverage_str, attach_specs, build_git_data, build_model, civil_from_days, commas,
     days_from_civil, fmt_date, lang_for, looks_generated, normalize, parse_spec_str, parse_threemd,
     render_html, render_svg, scaffold_spec, weekday, AttestSummary, Attestation, AugurSummary,
-    CommitInput, FileOut, GitData, Model, Source, Spec, SpecOut, ThreeMdDoc, Trust, CODE_EXTS,
-    COMPANION_NAMES, SKIP_DIRS,
+    CommitInput, FileOut, GitData, IgnoreSet, Model, Source, Spec, SpecOut, ThreeMdDoc, Trust,
+    CODE_EXTS, COMPANION_NAMES, SKIP_DIRS,
 };
 
 #[derive(Parser)]
@@ -130,7 +130,19 @@ fn run() -> Result<()> {
 
     let mut specs = load_specs(&root)?;
     enrich_drift(&root, &mut specs);
-    let mut sources = load_sources(&root);
+    // A project may scope the coverage denominator with an `.atlasignore` file
+    // (test trees, generated output, a marketing site): those paths leave the
+    // source set entirely, so they weigh on neither coverage nor orphans.
+    let ignore =
+        IgnoreSet::parse(&fs::read_to_string(root.join(".atlasignore")).unwrap_or_default());
+    if !ignore.is_empty() {
+        eprintln!(
+            "atlas: coverage scope limited by .atlasignore ({} pattern{})",
+            ignore.len(),
+            if ignore.len() == 1 { "" } else { "s" }
+        );
+    }
+    let mut sources = load_sources(&root, &ignore);
     attach_coverage(&root, &mut sources);
     let existing_paths = spec_paths_on_disk(&root, &specs);
     let coverage = attach_specs(&specs, &mut sources, &existing_paths);
@@ -1159,7 +1171,7 @@ fn enrich_drift(root: &Path, specs: &mut [Spec]) {
 // Source loading
 // ---------------------------------------------------------------------------
 
-fn load_sources(root: &Path) -> Vec<Source> {
+fn load_sources(root: &Path, ignore: &IgnoreSet) -> Vec<Source> {
     let mut sources = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     // Canonical dirs already walked, so symlink cycles cannot inflate counts.
@@ -1182,6 +1194,11 @@ fn load_sources(root: &Path) -> Vec<Source> {
                 if SKIP_DIRS.contains(&name.as_ref()) || name.starts_with('.') {
                     continue;
                 }
+                // A scoped-out directory is pruned whole, so nothing under it
+                // is even read.
+                if ignore.matches(&rel(root, &path)) {
+                    continue;
+                }
                 stack.push(path);
                 continue;
             }
@@ -1192,11 +1209,14 @@ fn load_sources(root: &Path) -> Vec<Source> {
             if !CODE_EXTS.contains(&ext) {
                 continue;
             }
+            let rel_path = rel(root, &path);
+            if ignore.matches(&rel_path) {
+                continue;
+            }
             let content = match fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let rel_path = rel(root, &path);
             // Generated/minified/vendored files are not hand-written code and
             // would otherwise dominate the verdict, worklist, and treemap.
             if looks_generated(&rel_path, &content) {
@@ -1753,7 +1773,9 @@ mod tests {
 
     fn analyze(root: &Path) -> (Vec<Spec>, Vec<Source>, Coverage) {
         let specs = load_specs(root).unwrap();
-        let mut sources = load_sources(root);
+        let ignore =
+            IgnoreSet::parse(&fs::read_to_string(root.join(".atlasignore")).unwrap_or_default());
+        let mut sources = load_sources(root, &ignore);
         attach_coverage(root, &mut sources);
         let existing = spec_paths_on_disk(root, &specs);
         let cov = attach_specs(&specs, &mut sources, &existing);
@@ -1777,6 +1799,22 @@ mod tests {
             cov.total_loc > cov.covered_loc,
             "orphan LOC keeps coverage under 100%"
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn atlasignore_scopes_files_out_of_coverage() {
+        let root = fixture();
+        // Baseline: orphan.rs is the one uncovered file.
+        let (_s, before, cov0) = analyze(&root);
+        assert_eq!(before.len(), 4);
+        assert_eq!(cov0.orphan_files, 1);
+        // Scope it out: the source set shrinks and coverage reaches 100%.
+        fs::write(root.join(".atlasignore"), "# scope\nsrc/orphan.rs\n").unwrap();
+        let (_s, after, cov1) = analyze(&root);
+        assert_eq!(after.len(), 3, "orphan.rs left the source set");
+        assert_eq!(cov1.orphan_files, 0, "nothing orphaned once scoped out");
+        assert!(!after.iter().any(|s| s.rel_path.ends_with("orphan.rs")));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1877,7 +1915,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut sources = load_sources(&root);
+        let mut sources = load_sources(&root, &IgnoreSet::default());
         attach_coverage(&root, &mut sources);
         let foo = sources
             .iter()

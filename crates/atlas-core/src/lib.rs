@@ -56,6 +56,89 @@ pub const SKIP_DIRS: &[&str] = &[
     ".terraform",
 ];
 
+/// A per-repo coverage-scope filter, read from an `.atlasignore` file at the
+/// project root. Each non-blank, non-`#` line is a pattern; a file whose
+/// repo-relative path matches any pattern is left out of the atlas source set,
+/// so it counts toward neither coverage nor orphans (the same effect as a
+/// `SKIP_DIRS` entry, chosen per project). Three pattern forms, all anchored at
+/// the repo root and a deliberately small subset of gitignore (no negation):
+///   - `dir/` (trailing slash): that directory and everything under it
+///   - `*.ext`: any file with that extension
+///   - `path`: that exact file, or a directory of that name and its contents
+///
+/// Enough to scope out test trees, generated output, and marketing sites so the
+/// coverage number reflects the code the specs are actually meant to govern.
+#[derive(Debug, Default, Clone)]
+pub struct IgnoreSet {
+    dirs: Vec<String>,
+    exts: Vec<String>,
+    names: Vec<String>,
+}
+
+impl IgnoreSet {
+    /// Parse the contents of an `.atlasignore` file.
+    pub fn parse(text: &str) -> Self {
+        let mut set = IgnoreSet::default();
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let line = line.trim_start_matches("./");
+            // A bare `./` (or `.//`) trims to empty; skip it rather than push an
+            // empty name that would need special-casing in `matches`.
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(dir) = line.strip_suffix('/') {
+                let dir = dir.trim_end_matches('/');
+                if !dir.is_empty() {
+                    set.dirs.push(dir.to_string());
+                }
+            } else if let Some(ext) = line.strip_prefix("*.") {
+                if !ext.is_empty() {
+                    set.exts.push(ext.to_string());
+                }
+            } else {
+                set.names.push(line.to_string());
+            }
+        }
+        set
+    }
+
+    /// The number of patterns loaded.
+    pub fn len(&self) -> usize {
+        self.dirs.len() + self.exts.len() + self.names.len()
+    }
+
+    /// True when no patterns are loaded, so nothing is scoped out.
+    pub fn is_empty(&self) -> bool {
+        self.dirs.is_empty() && self.exts.is_empty() && self.names.is_empty()
+    }
+
+    /// True when `rel` (a `/`-separated repo-relative path) is out of scope.
+    pub fn matches(&self, rel: &str) -> bool {
+        let rel = rel.trim_start_matches('/');
+        // `matches` runs for every walked file, so test "rel is `base`, or `base`
+        // followed by a `/`" without allocating a `format!("{base}/")` per check.
+        let under = |base: &str| {
+            rel == base || (rel.starts_with(base) && rel.as_bytes().get(base.len()) == Some(&b'/'))
+        };
+        if self.dirs.iter().any(|dir| under(dir)) {
+            return true;
+        }
+        if !self.exts.is_empty() {
+            let file = rel.rsplit('/').next().unwrap_or(rel);
+            if let Some((_, ext)) = file.rsplit_once('.') {
+                if self.exts.iter().any(|e| e == ext) {
+                    return true;
+                }
+            }
+        }
+        self.names.iter().any(|name| under(name))
+    }
+}
+
 /// One parsed `*.spec.md`.
 pub struct Spec {
     pub module: String,
@@ -4386,6 +4469,43 @@ mod tests {
         assert_eq!(lerp_hex("#000000", "#ffffff", 0.0), "#000000");
         assert_eq!(lerp_hex("#000000", "#ffffff", 1.0), "#ffffff");
         assert_eq!(lerp_hex("#000000", "#ffffff", 0.5), "#808080");
+    }
+
+    #[test]
+    fn ignore_set_matches_dirs_exts_and_names() {
+        let ig = IgnoreSet::parse("# scope\nTests/\n*.md\nPackage.swift\nsite/\n");
+        assert_eq!(ig.len(), 4);
+        // directory prefixes, and the bare directory name itself
+        assert!(ig.matches("Tests/AugurKitTests/GlobTests.swift"));
+        assert!(ig.matches("Tests"));
+        assert!(ig.matches("site/src/index.ts"));
+        // extension form
+        assert!(ig.matches("docs/README.md"));
+        // exact-file form
+        assert!(ig.matches("Package.swift"));
+        // near-misses that must not be scoped out
+        assert!(!ig.matches("Sources/augur/AugurCommand.swift"));
+        assert!(!ig.matches("PackageManifest.swift"));
+        assert!(!ig.matches("site.swift"));
+    }
+
+    #[test]
+    fn ignore_set_is_empty_when_blank_or_comments_only() {
+        assert!(IgnoreSet::parse("\n#just a comment\n   \n").is_empty());
+        assert!(IgnoreSet::default().is_empty());
+        assert!(!IgnoreSet::default().matches("anything/at/all.rs"));
+    }
+
+    #[test]
+    fn ignore_set_skips_bare_dot_slash_and_respects_segment_boundaries() {
+        // A bare `./` must not become an empty pattern that matches everything.
+        let ig = IgnoreSet::parse("./\nsrc/\n");
+        assert_eq!(ig.len(), 1);
+        assert!(ig.matches("src/main.rs"));
+        // The allocation-free matcher must still require a real `/` boundary,
+        // so `src/` never matches a sibling like `src-gen/`.
+        assert!(!ig.matches("src-gen/x.rs"));
+        assert!(!ig.matches("other/main.rs"));
     }
 
     #[test]
