@@ -147,7 +147,7 @@ fn run() -> Result<()> {
         return emit_spec_detail(&root, &specs, &sources, &model, module);
     }
     if let Some(query) = &cli.owns {
-        return emit_owns(&model, query);
+        return emit_owns(&root, &model, query);
     }
     if let Some(reference) = &cli.since {
         return emit_since(&root, &specs, &model, reference);
@@ -266,7 +266,46 @@ fn emit_spec_detail(
 /// query (exact rel-path, then any path with that suffix, then basename) and emit
 /// which specs govern it plus its orphan/overlap/coverage facts. When nothing
 /// matches, emit a null result rather than erroring.
-fn emit_owns(model: &Model, query: &str) -> Result<()> {
+/// Why a path that exists on disk is nonetheless absent from the atlas model, or
+/// `None` when `rel` is not a real on-disk file (a partial query the caller
+/// should fuzzy-match instead). `on_disk` and `is_generated` are supplied by the
+/// caller so this stays pure and testable; the classification mirrors the source
+/// walker's own filters exactly.
+fn exclusion_reason(rel: &str, on_disk: bool, is_generated: bool) -> Option<String> {
+    if !on_disk {
+        return None;
+    }
+    // Only directory components gate the walk; the filename never does.
+    let mut segments: Vec<&str> = rel.split('/').collect();
+    segments.pop();
+    if segments
+        .iter()
+        .any(|c| SKIP_DIRS.contains(c) || c.starts_with('.'))
+    {
+        return Some(
+            "inside a directory the atlas never walks (build output, vendored deps, a dotdir, or the specs/config tree)"
+                .into(),
+        );
+    }
+    match Path::new(rel).extension().and_then(|e| e.to_str()) {
+        Some(ext) if CODE_EXTS.contains(&ext) => {
+            if is_generated {
+                Some(
+                    "flagged as generated, minified, or vendored, so it is excluded from the source set"
+                        .into(),
+                )
+            } else {
+                Some("present on disk but outside the atlas source set".into())
+            }
+        }
+        _ => Some(
+            "not a recognized code file, so it is outside the coverage set (a spec may still govern it as a non-code file)"
+                .into(),
+        ),
+    }
+}
+
+fn emit_owns(root: &Path, model: &Model, query: &str) -> Result<()> {
     let q = normalize(query);
     let qbase = q.rsplit('/').next().unwrap_or(q.as_str());
     // Suffix matches must fall on a path-segment boundary, so a query of
@@ -278,6 +317,37 @@ fn emit_owns(model: &Model, query: &str) -> Result<()> {
         .iter()
         .filter(|f| f.path.rsplit('/').next() == Some(qbase))
         .collect();
+
+    // A query that names a real file on disk but is not a governed source file
+    // exists yet sits outside the atlas. Say so plainly, with any same-named
+    // governed files offered only as hints, instead of silently attributing it
+    // to a basename cousin.
+    if !exact_hit {
+        let abs = root.join(&q);
+        let on_disk = abs.is_file();
+        let is_generated = on_disk
+            && Path::new(&q)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| CODE_EXTS.contains(&e))
+            && fs::read_to_string(&abs)
+                .map(|c| looks_generated(&q, &c))
+                .unwrap_or(false);
+        if let Some(reason) = exclusion_reason(&q, on_disk, is_generated) {
+            let hints: Vec<&String> = basename_matches.iter().map(|m| &m.path).collect();
+            let out = serde_json::json!({
+                "query": query,
+                "file": serde_json::Value::Null,
+                "on_disk": true,
+                "excluded": true,
+                "reason": reason,
+                "matches": hints,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+            return Ok(());
+        }
+    }
+
     let file = model
         .files
         .iter()
@@ -1556,6 +1626,63 @@ mod tests {
             rel(&root, &PathBuf::from("/elsewhere/x.rs")),
             "/elsewhere/x.rs"
         );
+    }
+
+    #[test]
+    fn exclusion_reason_is_none_for_a_non_on_disk_query() {
+        // A partial path an agent might pass ("main.rs") is not a real file, so
+        // it falls through to the existing fuzzy match, not the excluded branch.
+        assert_eq!(exclusion_reason("main.rs", false, false), None);
+    }
+
+    #[test]
+    fn exclusion_reason_flags_skipped_directories() {
+        let r = exclusion_reason("node_modules/pkg/index.js", true, false).unwrap();
+        assert!(r.contains("never walks"), "{r}");
+        // A dotdir is skipped the same way the walker skips it.
+        let r = exclusion_reason(".github/scripts/badges.mjs", true, false).unwrap();
+        assert!(r.contains("never walks"), "{r}");
+    }
+
+    #[test]
+    fn exclusion_reason_flags_non_code_and_extensionless_files() {
+        assert!(exclusion_reason("docs/NOTES.md", true, false)
+            .unwrap()
+            .contains("not a recognized code file"));
+        assert!(exclusion_reason("Makefile", true, false)
+            .unwrap()
+            .contains("not a recognized code file"));
+    }
+
+    #[test]
+    fn exclusion_reason_flags_generated_code() {
+        assert!(exclusion_reason("web/app/pkg/atlas.js", true, true)
+            .unwrap()
+            .contains("generated"));
+        // A code file on disk that is not generated and not skipped would
+        // normally be in the model; the catch-all still names it as excluded.
+        assert_eq!(
+            exclusion_reason("src/plain.rs", true, false),
+            Some("present on disk but outside the atlas source set".into())
+        );
+    }
+
+    #[test]
+    fn owns_reports_an_excluded_on_disk_file_over_a_basename_cousin() {
+        // A real file on disk that the atlas skips (here, under node_modules)
+        // must resolve as excluded, never as a same-named governed cousin.
+        let dir = tmp();
+        fs::create_dir_all(dir.join("node_modules/dep")).unwrap();
+        fs::write(
+            dir.join("node_modules/dep/index.js"),
+            "export const x = 1;\n",
+        )
+        .unwrap();
+        let q = normalize("node_modules/dep/index.js");
+        let on_disk = dir.join(&q).is_file();
+        assert!(on_disk, "the test file exists on disk");
+        let reason = exclusion_reason(&q, on_disk, false).unwrap();
+        assert!(reason.contains("never walks"), "{reason}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 module: engine
-version: 3
+version: 4
 status: active
 files:
   - crates/atlas-core/src/lib.rs
@@ -58,7 +58,7 @@ The public contract is the CLI, plus the pure pipeline functions and types in
 | `--svg` | `<COMPONENT>` | Print one component as a standalone SVG to stdout, for embedding in a README or job summary. One of `coverage`, `langmix`, `treemap`; an unknown name errors and lists the valid ones. |
 | `--review` | none | Print only the specs whose `needs_review` is true, as JSON. |
 | `--spec` | `<MODULE>` | Print one spec's full detail: its `SpecOut`, the spec doc text, companion text, and governed files. |
-| `--owns` | `<PATH>` | Reverse index: which specs govern a file, plus its orphan/overlap/coverage facts. Matches exact path, then suffix, then basename. |
+| `--owns` | `<PATH>` | Reverse index: which specs govern a file, plus its orphan/overlap/coverage facts. Matches exact path, then suffix, then basename. A query that names a real file on disk which is not a governed source file is reported as excluded (`file: null`, `on_disk: true`, `excluded: true`, plus a plain-language `reason`) rather than silently attributed to a same-named cousin. |
 | `--since` | `<REF>` | Print which specs were touched by changes in `<REF>..HEAD`, and which of those now warrant review. |
 | `--gaps` | none | Print a coverage-gap worklist: files under 100% test coverage ranked by uncovered lines. Needs an lcov report. |
 | `--scaffold` | none | Print a ready-to-save `*.spec.md` skeleton for the top-ranked orphan cluster. |
@@ -181,6 +181,16 @@ Then it prints a single self-contained <svg> (no external CSS, fonts, or
      by governance, and running it again on the same state prints identical bytes.
 ```
 
+```
+Given a query to `--owns` that names a real file on disk which the atlas
+     excludes from its source set (generated, minified, vendored, inside a
+     skipped directory, or not a code file)
+When the query has no exact governed match
+Then it reports the file as excluded (file: null, on_disk: true, excluded: true,
+     with a plain reason) and lists any same-named governed files only under
+     `matches` as hints, instead of silently returning one of them as the file.
+```
+
 ## Error Cases
 
 | Error | When | Behavior |
@@ -198,6 +208,7 @@ Then it prints a single self-contained <svg> (no external CSS, fonts, or
 | `--svg <unknown>` | component name not in `SVG_COMPONENTS` | `anyhow::bail!` listing the valid component names, exit 1. |
 | `--scaffold` with no orphans | every file already under a spec | Prints a note to stderr and exits 0; nothing to scaffold. |
 | Ambiguous `--owns` basename | many files share the basename, query not exact | Returns the first match plus a `matches` list of every candidate. |
+| Excluded `--owns` path | query names a real on-disk file the atlas does not govern | Returns `file: null` with `on_disk: true`, `excluded: true`, and a `reason`; same-named governed files appear only under `matches`. Not an error. |
 | `fledge spec check` / `augur` / `attest` absent or slow | drift and trust enrichment | Best-effort: skipped on error or timeout, leaving no drift or trust panel. |
 
 ## Dependencies
@@ -224,3 +235,4 @@ Then it prints a single self-contained <svg> (no external CSS, fonts, or
 | 1 | 2026-07-01 | Initial spec |
 | 2 | 2026-07-01 | Split into the `atlas-core` (pure) and `atlas-cli` (IO) workspace crates; updated the pipeline signatures (`render_html(&Model)`, `attach_specs` with `existing_paths`, `attach_coverage_str`, `parse_spec_str`, `build_git_data`). |
 | 3 | 2026-07-02 | Added `render_svg(&Model, component)` and the `--svg` flag: standalone, deterministic SVG for the `coverage`, `langmix`, and `treemap` components, for embedding as living README images and via the composite GitHub Action. |
+| 4 | 2026-07-03 | `--owns` now reports a real on-disk file the atlas excludes (generated, skipped-dir, or non-code) as `excluded` with a plain `reason`, instead of silently returning a same-named governed cousin. |

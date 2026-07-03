@@ -241,7 +241,10 @@ A handful of commands make atlas an agent's primary lens on a project:
   and it returns the specs that govern it, plus that file's `orphan` / `overlap`
   flags, `test_pct`, last-change timestamp, and spec count. It matches by exact
   path first, then any path with that suffix, then basename, and returns a null
-  result (never an error) when nothing matches. Answers "who owns this file?"
+  result (never an error) when nothing matches. A path that *is* a real file on
+  disk but sits outside the atlas (generated, vendored, in a skipped directory,
+  or not code) comes back as `excluded` with a plain `reason`, so an agent is
+  never handed a same-named cousin by mistake. Answers "who owns this file?"
 - **`fledge atlas --since <REF>`** maps the paths changed since a git ref
   (`<REF>..HEAD`) onto the specs whose footprint (governed files, spec doc, or
   companions) they touch, and calls out which of those touched specs already
