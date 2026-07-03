@@ -15,9 +15,9 @@ inputs:
     required: false
     default: "atlas"
   components:
-    description: "Space-separated SVG components to render. Any of: coverage, langmix, treemap."
+    description: "Space-separated SVG components to render. Any of: coverage, langmix, treemap, sunburst, calendar (calendar needs full git history, so fetch-depth: 0)."
     required: false
-    default: "coverage langmix treemap"
+    default: "coverage langmix treemap sunburst"
   version:
     description: "git ref (tag, branch, or SHA) of fledge-plugin-atlas to install the CLI from. Defaults to the ref this action was called at, so `uses: ...@v1` pins the CLI to v1 too; falls back to main."
     required: false

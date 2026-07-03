@@ -85,6 +85,11 @@ impl IgnoreSet {
                 continue;
             }
             let line = line.trim_start_matches("./");
+            // A bare `./` (or `.//`) trims to empty; skip it rather than push an
+            // empty name that would need special-casing in `matches`.
+            if line.is_empty() {
+                continue;
+            }
             if let Some(dir) = line.strip_suffix('/') {
                 let dir = dir.trim_end_matches('/');
                 if !dir.is_empty() {
@@ -114,10 +119,13 @@ impl IgnoreSet {
     /// True when `rel` (a `/`-separated repo-relative path) is out of scope.
     pub fn matches(&self, rel: &str) -> bool {
         let rel = rel.trim_start_matches('/');
-        for dir in &self.dirs {
-            if rel == *dir || rel.starts_with(&format!("{dir}/")) {
-                return true;
-            }
+        // `matches` runs for every walked file, so test "rel is `base`, or `base`
+        // followed by a `/`" without allocating a `format!("{base}/")` per check.
+        let under = |base: &str| {
+            rel == base || (rel.starts_with(base) && rel.as_bytes().get(base.len()) == Some(&b'/'))
+        };
+        if self.dirs.iter().any(|dir| under(dir)) {
+            return true;
         }
         if !self.exts.is_empty() {
             let file = rel.rsplit('/').next().unwrap_or(rel);
@@ -127,12 +135,7 @@ impl IgnoreSet {
                 }
             }
         }
-        for name in &self.names {
-            if rel == *name || rel.starts_with(&format!("{name}/")) {
-                return true;
-            }
-        }
-        false
+        self.names.iter().any(|name| under(name))
     }
 }
 
@@ -4491,6 +4494,18 @@ mod tests {
         assert!(IgnoreSet::parse("\n#just a comment\n   \n").is_empty());
         assert!(IgnoreSet::default().is_empty());
         assert!(!IgnoreSet::default().matches("anything/at/all.rs"));
+    }
+
+    #[test]
+    fn ignore_set_skips_bare_dot_slash_and_respects_segment_boundaries() {
+        // A bare `./` must not become an empty pattern that matches everything.
+        let ig = IgnoreSet::parse("./\nsrc/\n");
+        assert_eq!(ig.len(), 1);
+        assert!(ig.matches("src/main.rs"));
+        // The allocation-free matcher must still require a real `/` boundary,
+        // so `src/` never matches a sibling like `src-gen/`.
+        assert!(!ig.matches("src-gen/x.rs"));
+        assert!(!ig.matches("other/main.rs"));
     }
 
     #[test]
