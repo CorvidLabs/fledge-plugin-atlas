@@ -3397,7 +3397,7 @@ const SINCE_JS: &str = include_str!("since.js");
 // light-theme brand tokens, inlined so the image needs no external CSS.
 
 /// Component names `render_svg` understands.
-pub const SVG_COMPONENTS: &[&str] = &["coverage", "langmix", "treemap"];
+pub const SVG_COMPONENTS: &[&str] = &["coverage", "langmix", "treemap", "sunburst", "calendar"];
 
 const SVG_BG: &str = "#faf9f6";
 const SVG_BORDER: &str = "#dcdad2";
@@ -3406,6 +3406,7 @@ const SVG_FAINT: &str = "#6b7076";
 const SVG_TEAL: &str = "#0e6f66";
 const SVG_GOLD: &str = "#b07a1e";
 const SVG_CLAY: &str = "#a0492e";
+const SVG_GREEN: &str = "#2f6b3a";
 const SVG_TRACK: &str = "#e7e5dd";
 const SVG_FONT: &str =
     "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
@@ -3421,6 +3422,8 @@ pub fn render_svg(m: &Model, component: &str) -> Result<String> {
         "coverage" => Ok(svg_coverage(m)),
         "langmix" => Ok(svg_langmix(m)),
         "treemap" => Ok(svg_treemap(m)),
+        "sunburst" => Ok(svg_sunburst(m)),
+        "calendar" => Ok(svg_calendar(m)),
         other => anyhow::bail!(
             "unknown svg component {:?}; valid: {}",
             other,
@@ -3764,6 +3767,316 @@ fn treemap_layout(weights: &[f64], x: f64, y: f64, w: f64, h: f64) -> Vec<(f64, 
     out
 }
 
+// ---- coverage sunburst -----------------------------------------------------
+
+/// One node of the directory tree the sunburst draws: aggregate LOC and the
+/// LOC under at least one spec, plus child directories/files keyed by name.
+#[derive(Default)]
+struct SunNode {
+    loc: f64,
+    covered: f64,
+    children: BTreeMap<String, SunNode>,
+}
+
+impl SunNode {
+    fn insert(&mut self, parts: &[&str], loc: f64, covered: f64) {
+        self.loc += loc;
+        self.covered += covered;
+        if let Some((head, rest)) = parts.split_first() {
+            self.children
+                .entry((*head).to_string())
+                .or_default()
+                .insert(rest, loc, covered);
+        }
+    }
+}
+
+/// Parse a `#rrggbb` string into float RGB, or black if malformed.
+fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
+    let h = hex.trim_start_matches('#');
+    // Guard `is_ascii` too: slicing `h[i..i + 2]` on a byte offset that splits a
+    // multi-byte UTF-8 char would panic, and a non-ASCII hex is malformed anyway.
+    if h.len() < 6 || !h.is_ascii() {
+        return (0.0, 0.0, 0.0);
+    }
+    let c = |i: usize| i64::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f64;
+    (c(0), c(2), c(4))
+}
+
+/// Linear interpolation between two `#rrggbb` colors, `t` clamped to `0..1`.
+fn lerp_hex(a: &str, b: &str, t: f64) -> String {
+    let t = t.clamp(0.0, 1.0);
+    let (ar, ag, ab) = hex_to_rgb(a);
+    let (br, bg, bb) = hex_to_rgb(b);
+    let m = |x: f64, y: f64| (x + (y - x) * t).round() as i64;
+    format!("#{:02x}{:02x}{:02x}", m(ar, br), m(ag, bg), m(ab, bb))
+}
+
+/// SVG path for an annular sector (a ring slice) between two radii and angles.
+///
+/// A single-child ring spans the full circle, where a lone arc's start and end
+/// points coincide and SVG renders nothing (and nudging the end by a hair rounds
+/// back to the same 2-decimal point at small radii, leaving the inner hole
+/// unfilled). So a (near-)full ring is split into two half sweeps, each of which
+/// has distinct, well-separated endpoints.
+fn arc_sector(cx: f64, cy: f64, r_in: f64, r_out: f64, a0: f64, a1: f64) -> String {
+    if (a1 - a0) >= std::f64::consts::TAU - 1e-5 {
+        let mid = a0 + std::f64::consts::PI;
+        return format!(
+            "{} {}",
+            one_sector(cx, cy, r_in, r_out, a0, mid),
+            one_sector(cx, cy, r_in, r_out, mid, a0 + std::f64::consts::TAU),
+        );
+    }
+    one_sector(cx, cy, r_in, r_out, a0, a1)
+}
+
+/// One annular sector spanning less than a full circle.
+fn one_sector(cx: f64, cy: f64, r_in: f64, r_out: f64, a0: f64, a1: f64) -> String {
+    let p = |r: f64, a: f64| (cx + r * a.cos(), cy + r * a.sin());
+    let large = if (a1 - a0) > std::f64::consts::PI {
+        1
+    } else {
+        0
+    };
+    let (x0o, y0o) = p(r_out, a0);
+    let (x1o, y1o) = p(r_out, a1);
+    let (x1i, y1i) = p(r_in, a1);
+    let (x0i, y0i) = p(r_in, a0);
+    format!(
+        "M{x0o:.2} {y0o:.2} A{r_out:.2} {r_out:.2} 0 {large} 1 {x1o:.2} {y1o:.2} \
+         L{x1i:.2} {y1i:.2} A{r_in:.2} {r_in:.2} 0 {large} 0 {x0i:.2} {y0i:.2} Z"
+    )
+}
+
+/// Recursively emit one ring slice per node, each colored by its coverage.
+#[allow(clippy::too_many_arguments)]
+fn sunburst_walk(
+    node: &SunNode,
+    depth: usize,
+    a0: f64,
+    a1: f64,
+    max_depth: usize,
+    cx: f64,
+    cy: f64,
+    r0: f64,
+    rw: f64,
+    out: &mut String,
+) {
+    if depth >= 1 {
+        let r_in = r0 + (depth as f64 - 1.0) * rw;
+        let r_out = r_in + rw;
+        let frac = if node.loc > 0.0 {
+            node.covered / node.loc
+        } else {
+            0.0
+        };
+        out.push_str(&format!(
+            "<path d=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"1\"/>",
+            arc_sector(cx, cy, r_in, r_out, a0, a1),
+            lerp_hex(SVG_CLAY, SVG_TEAL, frac),
+            SVG_BG,
+        ));
+    }
+    if depth < max_depth && !node.children.is_empty() {
+        let mut kids: Vec<&SunNode> = node.children.values().collect();
+        kids.sort_by(|a, b| {
+            b.loc
+                .partial_cmp(&a.loc)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let total: f64 = kids.iter().map(|n| n.loc).sum::<f64>().max(1e-9);
+        let mut a = a0;
+        for child in kids {
+            let span = (a1 - a0) * child.loc / total;
+            sunburst_walk(
+                child,
+                depth + 1,
+                a,
+                a + span,
+                max_depth,
+                cx,
+                cy,
+                r0,
+                rw,
+                out,
+            );
+            a += span;
+        }
+    }
+}
+
+/// The coverage sunburst: the directory tree as concentric rings, each area
+/// tinted clay (uncovered) to teal (fully spec-covered), with the overall
+/// percentage in the center.
+fn svg_sunburst(m: &Model) -> String {
+    let (w, h) = (460.0, 308.0);
+    let mut o = svg_open(w, h);
+    o.push_str(&svg_eyebrow(24.0, 30.0, "COVERAGE SUNBURST"));
+    let mut root = SunNode::default();
+    for f in &m.files {
+        if f.loc == 0 {
+            continue;
+        }
+        let covered = if f.orphan { 0.0 } else { f.loc as f64 };
+        let parts: Vec<&str> = f.path.split('/').filter(|s| !s.is_empty()).collect();
+        root.insert(&parts, f.loc as f64, covered);
+    }
+    if root.loc <= 0.0 {
+        o.push_str(&format!(
+            "<text x=\"24\" y=\"160\" font-size=\"13\" fill=\"{}\">No source files to map.</text></svg>",
+            SVG_FAINT,
+        ));
+        return o;
+    }
+    let (cx, cy, r0, rw, max_depth) = (168.0, 174.0, 30.0, 30.0, 3usize);
+    let start = -std::f64::consts::FRAC_PI_2;
+    sunburst_walk(
+        &root,
+        0,
+        start,
+        start + std::f64::consts::TAU,
+        max_depth,
+        cx,
+        cy,
+        r0,
+        rw,
+        &mut o,
+    );
+    let frac = root.covered / root.loc;
+    o.push_str(&format!(
+        "<circle cx=\"{cx}\" cy=\"{cy}\" r=\"{r0}\" fill=\"{}\"/>",
+        lerp_hex(SVG_CLAY, SVG_TEAL, frac),
+    ));
+    o.push_str(&format!(
+        "<text x=\"{cx}\" y=\"{:.1}\" text-anchor=\"middle\" font-size=\"20\" font-weight=\"700\" fill=\"#ffffff\">{:.0}%</text>",
+        cy + 7.0,
+        m.stats.coverage_pct.clamp(0.0, 100.0),
+    ));
+    // Coverage gradient legend, clay (bottom) to teal (top).
+    let (lx, ly, lw, lh) = (334.0, 92.0, 14.0, 168.0);
+    o.push_str(&format!(
+        "<text x=\"{lx}\" y=\"78\" font-family=\"{}\" font-size=\"10\" fill=\"{}\">spec coverage</text>",
+        SVG_MONO, SVG_FAINT,
+    ));
+    let steps = 24;
+    for i in 0..steps {
+        let seg = lh / steps as f64;
+        let yy = ly + i as f64 * seg;
+        let t = 1.0 - i as f64 / (steps as f64 - 1.0);
+        o.push_str(&format!(
+            "<rect x=\"{lx}\" y=\"{yy:.2}\" width=\"{lw}\" height=\"{seg:.2}\" fill=\"{}\"/>",
+            lerp_hex(SVG_CLAY, SVG_TEAL, t),
+        ));
+    }
+    o.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"10\" fill=\"{}\">100%</text>",
+        lx + lw + 6.0,
+        ly + 8.0,
+        SVG_MONO,
+        SVG_MUTED,
+    ));
+    o.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"10\" fill=\"{}\">0%</text>",
+        lx + lw + 6.0,
+        ly + lh,
+        SVG_MONO,
+        SVG_MUTED,
+    ));
+    o.push_str("</svg>");
+    o
+}
+
+// ---- commit-activity calendar ---------------------------------------------
+
+/// A GitHub-style contribution calendar from git history: one cell per day,
+/// colored teal (a spec doc changed), gold (code changed), or green (both).
+fn svg_calendar(m: &Model) -> String {
+    let (w, h) = (460.0, 172.0);
+    let mut o = svg_open(w, h);
+    o.push_str(&svg_eyebrow(24.0, 30.0, "COMMIT ACTIVITY"));
+    let cal = match &m.calendar {
+        Some(c) if !c.days.is_empty() => c,
+        _ => {
+            o.push_str(&format!(
+                "<text x=\"24\" y=\"96\" font-size=\"13\" fill=\"{}\">No git history available.</text></svg>",
+                SVG_FAINT,
+            ));
+            return o;
+        }
+    };
+    let mut by_day: BTreeMap<i64, &DayOut> = BTreeMap::new();
+    for d in &cal.days {
+        by_day.insert(d.day, d);
+    }
+    let (x0, y0, cell, gap) = (44.0, 56.0, 10.0, 3.0);
+    let step = cell + gap;
+    let weeks = (((w - x0 - 22.0) / step).floor() as i64).max(1);
+    let now_week = cal.now_day - weekday(cal.now_day);
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mut prev_month = 0u32;
+    for col in 0..weeks {
+        let week_start = now_week - (weeks - 1 - col) * 7;
+        let (_, mo, _) = civil_from_days(week_start);
+        if mo != prev_month {
+            prev_month = mo;
+            o.push_str(&format!(
+                "<text x=\"{:.1}\" y=\"{}\" font-family=\"{}\" font-size=\"9\" fill=\"{}\">{}</text>",
+                x0 + col as f64 * step,
+                y0 - 6.0,
+                SVG_MONO,
+                SVG_FAINT,
+                months[(mo as usize - 1).min(11)],
+            ));
+        }
+        for row in 0..7i64 {
+            let day = week_start + row;
+            if day > cal.now_day {
+                continue;
+            }
+            let x = x0 + col as f64 * step;
+            let y = y0 + row as f64 * step;
+            let fill = match by_day.get(&day) {
+                Some(d) if d.spec > 0 && d.code > 0 => SVG_GREEN,
+                Some(d) if d.code > 0 => SVG_GOLD,
+                Some(d) if d.spec > 0 => SVG_TEAL,
+                _ => SVG_TRACK,
+            };
+            o.push_str(&format!(
+                "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{cell}\" height=\"{cell}\" rx=\"2\" fill=\"{fill}\"/>"
+            ));
+        }
+    }
+    for (row, lbl) in [(1i64, "Mon"), (3, "Wed"), (5, "Fri")] {
+        o.push_str(&format!(
+            "<text x=\"{}\" y=\"{:.1}\" text-anchor=\"end\" font-family=\"{}\" font-size=\"9\" fill=\"{}\">{}</text>",
+            x0 - 6.0,
+            y0 + row as f64 * step + cell - 2.0,
+            SVG_MONO,
+            SVG_FAINT,
+            lbl,
+        ));
+    }
+    let ly = y0 + 7.0 * step + 14.0;
+    let mut lx = x0;
+    for (label, color) in [("spec", SVG_TEAL), ("code", SVG_GOLD), ("both", SVG_GREEN)] {
+        o.push_str(&format!(
+            "<rect x=\"{lx:.1}\" y=\"{:.1}\" width=\"9\" height=\"9\" rx=\"2\" fill=\"{color}\"/>\
+             <text x=\"{:.1}\" y=\"{:.1}\" font-family=\"{}\" font-size=\"10\" fill=\"{}\">{label}</text>",
+            ly - 9.0,
+            lx + 14.0,
+            ly - 1.0,
+            SVG_MONO,
+            SVG_MUTED,
+        ));
+        lx += 14.0 + 7.0 * label.len() as f64 + 16.0;
+    }
+    o.push_str("</svg>");
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3987,6 +4300,92 @@ mod tests {
         assert!(svg.contains(SVG_TEAL), "the covered file is teal");
         assert!(svg.contains(SVG_CLAY), "the orphan file is clay");
         assert!(svg.contains("a.rs"), "the largest tile is labeled");
+    }
+
+    #[test]
+    fn render_svg_sunburst_has_rings_and_center_coverage() {
+        let m = demo_model();
+        let svg = render_svg(&m, "sunburst").unwrap();
+        assert!(svg.contains("<path "), "sunburst draws arc sectors");
+        assert!(svg.contains("<circle "), "has a center disc");
+        assert!(svg.contains("spec coverage"), "has a coverage legend");
+    }
+
+    #[test]
+    fn arc_sector_splits_a_full_ring_into_two_visible_sweeps() {
+        // A single-child ring spans the full circle; it must render as two
+        // closed sweeps, not one degenerate (invisible) arc.
+        let full = arc_sector(0.0, 0.0, 10.0, 20.0, 0.0, std::f64::consts::TAU);
+        assert_eq!(
+            full.matches('Z').count(),
+            2,
+            "full ring is two sweeps: {full}"
+        );
+        // A partial slice stays a single sector.
+        let slice = arc_sector(0.0, 0.0, 10.0, 20.0, 0.0, 1.0);
+        assert_eq!(slice.matches('Z').count(), 1);
+    }
+
+    #[test]
+    fn render_svg_sunburst_renders_a_single_top_level_directory() {
+        // Everything under one folder makes ring 1 span the whole circle; the
+        // ring must still draw (this is the arc_sector full-circle case).
+        let mut m = demo_model();
+        for f in &mut m.files {
+            let name = f.path.rsplit('/').next().unwrap_or("x").to_string();
+            f.path = format!("src/{name}");
+        }
+        let svg = render_svg(&m, "sunburst").unwrap();
+        assert!(svg.contains("<path "), "the full ring renders: {svg}");
+    }
+
+    #[test]
+    fn render_svg_calendar_degrades_without_history() {
+        // demo_model is built with git = None, so there is no calendar.
+        let svg = render_svg(&demo_model(), "calendar").unwrap();
+        assert!(svg.contains("No git history"), "{svg}");
+    }
+
+    #[test]
+    fn render_svg_calendar_renders_cells_and_legend_with_history() {
+        let mut m = demo_model();
+        m.calendar = Some(Calendar {
+            now_day: 20_000,
+            days: vec![
+                DayOut {
+                    day: 20_000,
+                    date: "2024-10-04".into(),
+                    spec: 1,
+                    code: 2,
+                },
+                DayOut {
+                    day: 19_995,
+                    date: "2024-09-29".into(),
+                    spec: 0,
+                    code: 3,
+                },
+                DayOut {
+                    day: 19_990,
+                    date: "2024-09-24".into(),
+                    spec: 2,
+                    code: 0,
+                },
+            ],
+        });
+        let svg = render_svg(&m, "calendar").unwrap();
+        assert!(!svg.contains("No git history"));
+        assert!(svg.contains("<rect "), "draws day cells");
+        assert!(
+            svg.contains(">both<") && svg.contains(">spec<"),
+            "has a legend"
+        );
+    }
+
+    #[test]
+    fn lerp_hex_interpolates_endpoints() {
+        assert_eq!(lerp_hex("#000000", "#ffffff", 0.0), "#000000");
+        assert_eq!(lerp_hex("#000000", "#ffffff", 1.0), "#ffffff");
+        assert_eq!(lerp_hex("#000000", "#ffffff", 0.5), "#808080");
     }
 
     #[test]

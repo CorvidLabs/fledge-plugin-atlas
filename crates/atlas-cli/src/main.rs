@@ -52,7 +52,8 @@ struct Cli {
     json: bool,
 
     /// Print one atlas component as a standalone SVG to stdout, for embedding in
-    /// a README or job summary. One of: coverage, langmix, treemap.
+    /// a README or job summary. One of: coverage, langmix, treemap, sunburst,
+    /// calendar.
     #[arg(long, value_name = "COMPONENT")]
     svg: Option<String>,
 

@@ -1,6 +1,6 @@
 ---
 module: engine
-version: 4
+version: 5
 status: active
 files:
   - crates/atlas-core/src/lib.rs
@@ -55,7 +55,7 @@ The public contract is the CLI, plus the pure pipeline functions and types in
 | `path` (positional) | directory, default `.` | Project root to analyze; must resolve to a directory. |
 | `-o`, `--out` | file path | Output file; defaults to `<project>.atlas.html` (or `.3md`) in the current working directory. |
 | `--json` | none | Print the whole `Model` as pretty JSON to stdout instead of writing HTML. For agents. |
-| `--svg` | `<COMPONENT>` | Print one component as a standalone SVG to stdout, for embedding in a README or job summary. One of `coverage`, `langmix`, `treemap`; an unknown name errors and lists the valid ones. |
+| `--svg` | `<COMPONENT>` | Print one component as a standalone SVG to stdout, for embedding in a README or job summary. One of `coverage`, `langmix`, `treemap`, `sunburst`, `calendar`; an unknown name errors and lists the valid ones. |
 | `--review` | none | Print only the specs whose `needs_review` is true, as JSON. |
 | `--spec` | `<MODULE>` | Print one spec's full detail: its `SpecOut`, the spec doc text, companion text, and governed files. |
 | `--owns` | `<PATH>` | Reverse index: which specs govern a file, plus its orphan/overlap/coverage facts. Matches exact path, then suffix, then basename. A query that names a real file on disk which is not a governed source file is reported as excluded (`file: null`, `on_disk: true`, `excluded: true`, plus a plain-language `reason`) rather than silently attributed to a same-named cousin. |
@@ -81,7 +81,7 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 | `build_git_data` | core | `fn(&[CommitInput], &[Spec], &[Source], i64) -> GitData` | Fold a newest-first commit list into update history. The CLI mines the commits from `git log`; the web app from the GitHub API. |
 | `build_model` | core | `fn(&str, &[Spec], &[Source], &Coverage, Option<&GitData>) -> Model` | Fold specs, sources, coverage, and git history into the single serializable `Model`. |
 | `render_html` | core | `fn(&Model) -> Result<String>` | Render the self-contained HTML atlas, embedding the same `Model` JSON that `--json` prints. |
-| `render_svg` | core | `fn(&Model, &str) -> Result<String>` | Render one component (`coverage`, `langmix`, or `treemap`, listed in `SVG_COMPONENTS`) as a standalone, self-contained SVG string. Deterministic and browser-free (no force layout), so a given `Model` always yields byte-stable SVG. Unknown names error. |
+| `render_svg` | core | `fn(&Model, &str) -> Result<String>` | Render one component (`coverage`, `langmix`, `treemap`, `sunburst`, or `calendar`, listed in `SVG_COMPONENTS`) as a standalone, self-contained SVG string. Deterministic and browser-free (no force layout), so a given `Model` always yields byte-stable SVG. `calendar` needs git history and degrades to a "no history" note without it. Unknown names error. |
 
 ### Key Types
 
@@ -236,3 +236,4 @@ Then it reports the file as excluded (file: null, on_disk: true, excluded: true,
 | 2 | 2026-07-01 | Split into the `atlas-core` (pure) and `atlas-cli` (IO) workspace crates; updated the pipeline signatures (`render_html(&Model)`, `attach_specs` with `existing_paths`, `attach_coverage_str`, `parse_spec_str`, `build_git_data`). |
 | 3 | 2026-07-02 | Added `render_svg(&Model, component)` and the `--svg` flag: standalone, deterministic SVG for the `coverage`, `langmix`, and `treemap` components, for embedding as living README images and via the composite GitHub Action. |
 | 4 | 2026-07-03 | `--owns` now reports a real on-disk file the atlas excludes (generated, skipped-dir, or non-code) as `excluded` with a plain `reason`, instead of silently returning a same-named governed cousin. |
+| 5 | 2026-07-03 | Added two more `--svg` components: `sunburst` (the directory tree as coverage rings, tinted clay-to-teal, with the overall percentage in the center) and `calendar` (a GitHub-style commit-activity grid colored spec/code/both), rounding out the deterministic, browser-free component set. |
