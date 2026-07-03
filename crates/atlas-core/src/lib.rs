@@ -3794,7 +3794,9 @@ impl SunNode {
 /// Parse a `#rrggbb` string into float RGB, or black if malformed.
 fn hex_to_rgb(hex: &str) -> (f64, f64, f64) {
     let h = hex.trim_start_matches('#');
-    if h.len() < 6 {
+    // Guard `is_ascii` too: slicing `h[i..i + 2]` on a byte offset that splits a
+    // multi-byte UTF-8 char would panic, and a non-ASCII hex is malformed anyway.
+    if h.len() < 6 || !h.is_ascii() {
         return (0.0, 0.0, 0.0);
     }
     let c = |i: usize| i64::from_str_radix(&h[i..i + 2], 16).unwrap_or(0) as f64;
@@ -3811,7 +3813,26 @@ fn lerp_hex(a: &str, b: &str, t: f64) -> String {
 }
 
 /// SVG path for an annular sector (a ring slice) between two radii and angles.
+///
+/// A single-child ring spans the full circle, where a lone arc's start and end
+/// points coincide and SVG renders nothing (and nudging the end by a hair rounds
+/// back to the same 2-decimal point at small radii, leaving the inner hole
+/// unfilled). So a (near-)full ring is split into two half sweeps, each of which
+/// has distinct, well-separated endpoints.
 fn arc_sector(cx: f64, cy: f64, r_in: f64, r_out: f64, a0: f64, a1: f64) -> String {
+    if (a1 - a0) >= std::f64::consts::TAU - 1e-5 {
+        let mid = a0 + std::f64::consts::PI;
+        return format!(
+            "{} {}",
+            one_sector(cx, cy, r_in, r_out, a0, mid),
+            one_sector(cx, cy, r_in, r_out, mid, a0 + std::f64::consts::TAU),
+        );
+    }
+    one_sector(cx, cy, r_in, r_out, a0, a1)
+}
+
+/// One annular sector spanning less than a full circle.
+fn one_sector(cx: f64, cy: f64, r_in: f64, r_out: f64, a0: f64, a1: f64) -> String {
     let p = |r: f64, a: f64| (cx + r * a.cos(), cy + r * a.sin());
     let large = if (a1 - a0) > std::f64::consts::PI {
         1
@@ -4288,6 +4309,34 @@ mod tests {
         assert!(svg.contains("<path "), "sunburst draws arc sectors");
         assert!(svg.contains("<circle "), "has a center disc");
         assert!(svg.contains("spec coverage"), "has a coverage legend");
+    }
+
+    #[test]
+    fn arc_sector_splits_a_full_ring_into_two_visible_sweeps() {
+        // A single-child ring spans the full circle; it must render as two
+        // closed sweeps, not one degenerate (invisible) arc.
+        let full = arc_sector(0.0, 0.0, 10.0, 20.0, 0.0, std::f64::consts::TAU);
+        assert_eq!(
+            full.matches('Z').count(),
+            2,
+            "full ring is two sweeps: {full}"
+        );
+        // A partial slice stays a single sector.
+        let slice = arc_sector(0.0, 0.0, 10.0, 20.0, 0.0, 1.0);
+        assert_eq!(slice.matches('Z').count(), 1);
+    }
+
+    #[test]
+    fn render_svg_sunburst_renders_a_single_top_level_directory() {
+        // Everything under one folder makes ring 1 span the whole circle; the
+        // ring must still draw (this is the arc_sector full-circle case).
+        let mut m = demo_model();
+        for f in &mut m.files {
+            let name = f.path.rsplit('/').next().unwrap_or("x").to_string();
+            f.path = format!("src/{name}");
+        }
+        let svg = render_svg(&m, "sunburst").unwrap();
+        assert!(svg.contains("<path "), "the full ring renders: {svg}");
     }
 
     #[test]
