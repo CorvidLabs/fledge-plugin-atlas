@@ -22,6 +22,14 @@ inputs:
     description: "git ref (tag, branch, or SHA) of fledge-plugin-atlas to install the CLI from. Defaults to the ref this action was called at, so `uses: ...@v1` pins the CLI to v1 too; falls back to main."
     required: false
     default: ""
+  augur-token:
+    description: "Token with read access to CorvidLabs/augur releases. When set, the action installs augur and lights the live augur trust chip; when empty, the augur chip stays dark and nothing else changes."
+    required: false
+    default: ""
+  augur-version:
+    description: "augur release tag to install the prebuilt Linux binary from."
+    required: false
+    default: "v0.4.1"
 
 outputs:
   coverage:
@@ -54,6 +62,31 @@ runs:
         # A ref may be a tag, a branch, or a pinned commit SHA; try each in turn.
         install --tag "$REF" || install --branch "$REF" || install --rev "$REF"
 
+    - name: Fetch attestation notes
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      # attest records provenance in refs/notes/attest, which a normal checkout
+      # does not fetch. Pull every notes ref so atlas can read the ledger and
+      # light the attest trust chip. A no-op (|| true) where no notes exist.
+      run: git fetch origin '+refs/notes/*:refs/notes/*' --force || true
+
+    - name: Install augur
+      if: inputs.augur-token != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.augur-token }}
+        AUGUR_VERSION: ${{ inputs.augur-version }}
+      # Download the prebuilt static augur binary (verified by checksum) so the
+      # atlas model can carry a live change-risk verdict. Gated on a token
+      # because augur's releases are private; without one this step is skipped
+      # and the augur chip simply stays dark.
+      run: |
+        gh release download "$AUGUR_VERSION" --repo CorvidLabs/augur \
+          -p augur-linux-x86_64 -p augur-linux-x86_64.sha256 --dir "$RUNNER_TEMP"
+        ( cd "$RUNNER_TEMP" && sha256sum -c augur-linux-x86_64.sha256 )
+        chmod +x "$RUNNER_TEMP/augur-linux-x86_64"
+        sudo mv "$RUNNER_TEMP/augur-linux-x86_64" /usr/local/bin/augur
+
     - name: Render atlas
       id: render
       shell: bash
@@ -61,6 +94,9 @@ runs:
         ATLAS_PATH: ${{ inputs.path }}
         OUT_DIR: ${{ inputs.output-dir }}
         COMPONENTS: ${{ inputs.components }}
+        # Grade the last landed change, so a clean CI checkout still yields a
+        # verdict. Harmless when augur is not installed (the spawn just fails).
+        ATLAS_AUGUR_RANGE: "HEAD~1..HEAD"
       run: |
         mkdir -p "$OUT_DIR"
         fledge-atlas "$ATLAS_PATH" --json > "$OUT_DIR/atlas.json"

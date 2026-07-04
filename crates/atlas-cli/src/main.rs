@@ -1578,15 +1578,31 @@ fn gather_augur(root: &Path) -> Option<AugurSummary> {
     })
 }
 
-/// Run `augur check --json` in `root`, time-boxed. Spawns the process and reads
-/// its stdout on a worker thread so a slow or hung `augur` can never stall the
-/// atlas: on timeout we kill the child (so it and the thread cannot leak) and
-/// return `None`. Absence of the binary also yields `None`.
+/// Run `augur check --json` in `root`, time-boxed. When `ATLAS_AUGUR_RANGE` is
+/// set to a non-empty commit range, augur grades that range instead of the
+/// working tree (a CI checkout is clean, so the default working-tree scope
+/// reports no files and the trust panel drops the verdict). Spawns the process
+/// and reads its stdout on a worker thread so a slow or hung `augur` can never
+/// stall the atlas: on timeout we kill the child (so it and the thread cannot
+/// leak) and return `None`. Absence of the binary also yields `None`.
 fn run_augur_json(root: &Path, timeout: Duration) -> Option<Vec<u8>> {
     use std::io::Read;
 
+    let root_str = root.to_string_lossy().into_owned();
+    let mut args = vec!["check".to_string(), "--json".to_string(), "-C".to_string(), root_str];
+    // The atlas action sets ATLAS_AUGUR_RANGE (e.g. "HEAD~1..HEAD") so a clean CI
+    // checkout still grades the last landed change; unset or empty keeps the
+    // working-tree default, so local and pre-existing callers are unaffected.
+    if let Ok(range) = std::env::var("ATLAS_AUGUR_RANGE") {
+        let range = range.trim();
+        if !range.is_empty() {
+            args.push("--range".to_string());
+            args.push(range.to_string());
+        }
+    }
+
     let mut child = Command::new("augur")
-        .args(["check", "--json", "-C", &root.to_string_lossy()])
+        .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
