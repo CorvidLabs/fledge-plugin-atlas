@@ -71,7 +71,7 @@ runs:
       run: git fetch origin '+refs/notes/*:refs/notes/*' --force || true
 
     - name: Install augur
-      if: inputs.augur-token != ''
+      if: inputs.augur-token != '' && runner.os == 'Linux'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.augur-token }}
@@ -79,13 +79,16 @@ runs:
       # Download the prebuilt static augur binary (verified by checksum) so the
       # atlas model can carry a live change-risk verdict. Gated on a token
       # because augur's releases are private; without one this step is skipped
-      # and the augur chip simply stays dark.
+      # and the augur chip simply stays dark. Linux-only (the asset is
+      # augur-linux-x86_64); installs to a user dir so no sudo is required.
       run: |
         gh release download "$AUGUR_VERSION" --repo CorvidLabs/augur \
           -p augur-linux-x86_64 -p augur-linux-x86_64.sha256 --dir "$RUNNER_TEMP"
         ( cd "$RUNNER_TEMP" && sha256sum -c augur-linux-x86_64.sha256 )
         chmod +x "$RUNNER_TEMP/augur-linux-x86_64"
-        sudo mv "$RUNNER_TEMP/augur-linux-x86_64" /usr/local/bin/augur
+        mkdir -p "$HOME/.local/bin"
+        mv "$RUNNER_TEMP/augur-linux-x86_64" "$HOME/.local/bin/augur"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
     - name: Render atlas
       id: render

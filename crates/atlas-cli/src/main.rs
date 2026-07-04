@@ -1588,16 +1588,20 @@ fn gather_augur(root: &Path) -> Option<AugurSummary> {
 fn run_augur_json(root: &Path, timeout: Duration) -> Option<Vec<u8>> {
     use std::io::Read;
 
-    let root_str = root.to_string_lossy().into_owned();
-    let mut args = vec!["check".to_string(), "--json".to_string(), "-C".to_string(), root_str];
+    let mut args = vec![
+        std::ffi::OsString::from("check"),
+        std::ffi::OsString::from("--json"),
+        std::ffi::OsString::from("-C"),
+        root.as_os_str().to_os_string(),
+    ];
     // The atlas action sets ATLAS_AUGUR_RANGE (e.g. "HEAD~1..HEAD") so a clean CI
     // checkout still grades the last landed change; unset or empty keeps the
     // working-tree default, so local and pre-existing callers are unaffected.
     if let Ok(range) = std::env::var("ATLAS_AUGUR_RANGE") {
         let range = range.trim();
         if !range.is_empty() {
-            args.push("--range".to_string());
-            args.push(range.to_string());
+            args.push(std::ffi::OsString::from("--range"));
+            args.push(std::ffi::OsString::from(range));
         }
     }
 
