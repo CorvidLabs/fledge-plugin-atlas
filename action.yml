@@ -108,7 +108,15 @@ runs:
         # node failure never breaks the badge deploy.
         owner="$(printf '%s' "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')"
         name="${GITHUB_REPOSITORY#*/}"
-        curl -fsSL "https://${owner}.github.io/${name}/badges/history.json" \
+        name_lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+        # A user/org Pages repo (named <owner>.github.io) publishes at the domain
+        # root; every other (project) repo publishes under /<repo>/.
+        if [ "$name_lower" = "${owner}.github.io" ]; then
+          rel="badges/history.json"
+        else
+          rel="${name}/badges/history.json"
+        fi
+        curl -fsSL "https://${owner}.github.io/${rel}" \
           -o "$OUT_DIR/history.prev.json" 2>/dev/null || printf '[]' > "$OUT_DIR/history.prev.json"
         node -e '
           const fs = require("fs");
