@@ -22,12 +22,8 @@ inputs:
     description: "git ref (tag, branch, or SHA) of fledge-plugin-atlas to install the CLI from. Defaults to the ref this action was called at, so `uses: ...@v1` pins the CLI to v1 too; falls back to main."
     required: false
     default: ""
-  augur-token:
-    description: "Token with read access to CorvidLabs/augur releases. When set, the action installs augur and lights the live augur trust chip; when empty, the augur chip stays dark and nothing else changes."
-    required: false
-    default: ""
   augur-version:
-    description: "augur release tag to install the prebuilt Linux binary from."
+    description: "augur release tag whose public prebuilt Linux binary the action installs to light the live augur trust chip. No token needed: augur ships public release binaries."
     required: false
     default: "v0.4.1"
 
@@ -71,19 +67,20 @@ runs:
       run: git fetch origin '+refs/notes/*:refs/notes/*' --force || true
 
     - name: Install augur
-      if: inputs.augur-token != '' && runner.os == 'Linux'
+      if: runner.os == 'Linux'
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.augur-token }}
         AUGUR_VERSION: ${{ inputs.augur-version }}
-      # Download the prebuilt static augur binary (verified by checksum) so the
-      # atlas model can carry a live change-risk verdict. Gated on a token
-      # because augur's releases are private; without one this step is skipped
-      # and the augur chip simply stays dark. Linux-only (the asset is
-      # augur-linux-x86_64); installs to a user dir so no sudo is required.
+      # augur ships public release binaries, so no token is needed. Download the
+      # prebuilt static augur binary straight from the public release, verify it
+      # against its published checksum, and install to a user dir (no sudo) so
+      # the atlas model can carry a live change-risk verdict. Linux-only (the
+      # asset is augur-linux-x86_64); on any other runner this is skipped and the
+      # augur chip stays dark.
       run: |
-        gh release download "$AUGUR_VERSION" --repo CorvidLabs/augur \
-          -p augur-linux-x86_64 -p augur-linux-x86_64.sha256 --dir "$RUNNER_TEMP"
+        base="https://github.com/CorvidLabs/augur/releases/download/$AUGUR_VERSION"
+        curl -fsSL "$base/augur-linux-x86_64" -o "$RUNNER_TEMP/augur-linux-x86_64"
+        curl -fsSL "$base/augur-linux-x86_64.sha256" -o "$RUNNER_TEMP/augur-linux-x86_64.sha256"
         ( cd "$RUNNER_TEMP" && sha256sum -c augur-linux-x86_64.sha256 )
         chmod +x "$RUNNER_TEMP/augur-linux-x86_64"
         mkdir -p "$HOME/.local/bin"
