@@ -79,8 +79,8 @@ runs:
       # augur chip stays dark.
       run: |
         base="https://github.com/CorvidLabs/augur/releases/download/$AUGUR_VERSION"
-        curl -fsSL "$base/augur-linux-x86_64" -o "$RUNNER_TEMP/augur-linux-x86_64"
-        curl -fsSL "$base/augur-linux-x86_64.sha256" -o "$RUNNER_TEMP/augur-linux-x86_64.sha256"
+        curl -fsSL --retry 5 --retry-connrefused --retry-delay 1 "$base/augur-linux-x86_64" -o "$RUNNER_TEMP/augur-linux-x86_64"
+        curl -fsSL --retry 5 --retry-connrefused --retry-delay 1 "$base/augur-linux-x86_64.sha256" -o "$RUNNER_TEMP/augur-linux-x86_64.sha256"
         ( cd "$RUNNER_TEMP" && sha256sum -c augur-linux-x86_64.sha256 )
         chmod +x "$RUNNER_TEMP/augur-linux-x86_64"
         mkdir -p "$HOME/.local/bin"
