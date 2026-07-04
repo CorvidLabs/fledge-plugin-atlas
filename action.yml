@@ -71,21 +71,37 @@ runs:
       shell: bash
       env:
         AUGUR_VERSION: ${{ inputs.augur-version }}
-      # augur ships public release binaries, so no token is needed. Download the
-      # prebuilt static augur binary straight from the public release, verify it
-      # against its published checksum, and install to a user dir (no sudo) so
-      # the atlas model can carry a live change-risk verdict. Linux-only (the
-      # asset is augur-linux-x86_64); on any other runner this is skipped and the
-      # augur chip stays dark.
+        ATLAS_PATH: ${{ inputs.path }}
+      # augur ships public release binaries, so no token is needed. This step is
+      # strictly best-effort: augur is an additive trust signal, so any failure
+      # (network, checksum, git) must leave the chip dark WITHOUT breaking the
+      # badge deploy. Resilience does not rely on `set -e` (unreliable across bash
+      # versions): the download + checksum are the `if` condition, and only a
+      # clean verify reaches the install branch; both branches exit 0. The
+      # published .sha256 is a bare hash with no filename, so we build the
+      # checkline sha256sum -c expects. augur grades HEAD~1..HEAD, which a shallow
+      # checkout lacks, so we deepen once installed.
       run: |
-        base="https://github.com/CorvidLabs/augur/releases/download/$AUGUR_VERSION"
-        curl -fsSL --retry 5 --retry-connrefused --retry-delay 1 "$base/augur-linux-x86_64" -o "$RUNNER_TEMP/augur-linux-x86_64"
-        curl -fsSL --retry 5 --retry-connrefused --retry-delay 1 "$base/augur-linux-x86_64.sha256" -o "$RUNNER_TEMP/augur-linux-x86_64.sha256"
-        ( cd "$RUNNER_TEMP" && sha256sum -c augur-linux-x86_64.sha256 )
-        chmod +x "$RUNNER_TEMP/augur-linux-x86_64"
-        mkdir -p "$HOME/.local/bin"
-        mv "$RUNNER_TEMP/augur-linux-x86_64" "$HOME/.local/bin/augur"
-        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        base="https://github.com/CorvidLabs/augur/releases/download/${AUGUR_VERSION}"
+        bin="${RUNNER_TEMP}/augur-linux-x86_64"
+        sum="${RUNNER_TEMP}/augur.sha256"
+        retry="--retry 5 --retry-connrefused --retry-delay 1"
+        if curl -fsSL $retry "${base}/augur-linux-x86_64" -o "$bin" \
+          && curl -fsSL $retry "${base}/augur-linux-x86_64.sha256" -o "$sum" \
+          && want="$(tr -d '[:space:]' < "$sum")" \
+          && [ -n "$want" ] \
+          && printf '%s  %s\n' "$want" "$bin" | sha256sum -c - ; then
+          chmod +x "$bin"
+          mkdir -p "${HOME}/.local/bin"
+          mv "$bin" "${HOME}/.local/bin/augur"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+          if [ "$(git -C "$ATLAS_PATH" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+            git -C "$ATLAS_PATH" fetch --deepen 2 --quiet || :
+          fi
+          echo "augur ${AUGUR_VERSION} installed"
+        else
+          echo "::warning::augur install skipped; the augur trust chip stays dark for this run"
+        fi
 
     - name: Render atlas
       id: render
