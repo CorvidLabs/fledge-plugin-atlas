@@ -88,15 +88,15 @@ runs:
         retry="--retry 5 --retry-connrefused --retry-delay 1"
         if curl -fsSL $retry "${base}/augur-linux-x86_64" -o "$bin" \
           && curl -fsSL $retry "${base}/augur-linux-x86_64.sha256" -o "$sum" \
-          && want="$(tr -d '[:space:]' < "$sum")" \
+          && want="$(awk '{print $1}' "$sum")" \
           && [ -n "$want" ] \
           && printf '%s  %s\n' "$want" "$bin" | sha256sum -c - ; then
           chmod +x "$bin"
           mkdir -p "${HOME}/.local/bin"
           mv "$bin" "${HOME}/.local/bin/augur"
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
-          if [ "$(git -C "$ATLAS_PATH" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-            git -C "$ATLAS_PATH" fetch --deepen 2 --quiet || :
+          if [ "$(git -C "${ATLAS_PATH:-.}" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+            git -C "${ATLAS_PATH:-.}" fetch --deepen 2 --quiet || :
           fi
           echo "augur ${AUGUR_VERSION} installed"
         else
