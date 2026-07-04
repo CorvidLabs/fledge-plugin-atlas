@@ -12,6 +12,9 @@ jobs:
   build-test:
     name: Build, test, and govern
     runs-on: ubuntu-latest
+    # contents: write lets the attest step push refs/notes/attest on main.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +50,37 @@ jobs:
             if (fails.length) { console.error("Governance gate failed:\n  - " + fails.join("\n  - ")); process.exit(1); }
             console.log(`Governance OK: ${s.specs} specs, 100% of code spec-covered, 0 orphans, 0 phantoms.`);
           '
+
+      # After build + test + governance pass, record a provenance attestation on
+      # this commit with attest and push it to refs/notes/attest, so the repo
+      # builds a trust ledger (and its /trust/ attest pip lights). Best-effort and
+      # main-only: attest is additive, so any download/sign/push hiccup logs a
+      # warning and never fails the build. attest ships a public Linux binary, so
+      # no token is needed; the checkline is built from its bare .sha256.
+      - name: Record attestation (attest, main only, best-effort)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ATTEST_VERSION: v0.5.0
+        run: |
+          base="https://github.com/CorvidLabs/attest/releases/download/${ATTEST_VERSION}"
+          bin="${RUNNER_TEMP}/attest"; sum="${bin}.sha256"
+          retry="--retry 5 --retry-connrefused --retry-delay 1"
+          if curl -fsSL $retry "${base}/attest-linux-x86_64" -o "$bin" \
+            && curl -fsSL $retry "${base}/attest-linux-x86_64.sha256" -o "$sum" \
+            && want="$(awk '{print $1}' "$sum")" && [ -n "$want" ] \
+            && printf '%s  %s\n' "$want" "$bin" | sha256sum -c - ; then
+            chmod +x "$bin"
+            git fetch origin "+refs/notes/attest:refs/notes/attest" 2>/dev/null || true
+            if "$bin" sign --commit HEAD --reviewer agent:ci --confidence 0.9 --tests-passed \
+                 --verdict proceed --note "CI: cargo build + cargo test + atlas governance gate green" \
+               && git push origin refs/notes/attest ; then
+              echo "attestation recorded for $(git rev-parse --short HEAD)"
+            else
+              echo "::warning::attest sign/push failed; provenance not recorded this run"
+            fi
+          else
+            echo "::warning::attest download/verify failed; provenance not recorded this run"
+          fi
 
   coverage:
     name: Test coverage (lcov)

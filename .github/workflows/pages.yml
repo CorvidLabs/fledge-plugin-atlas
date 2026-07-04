@@ -42,41 +42,33 @@ jobs:
             crates/atlas-wasm/target
           key: pages-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'crates/atlas-core/**/*.rs') }}
 
-      - name: Build atlas CLI
-        run: cargo build --release --locked --bin fledge-atlas
+      # Cache the pinned atlas CLI the reusable action installs, so the render is
+      # a fast no-op on a cache hit. Keyed to the commit `v1` resolves to.
+      - name: Resolve pinned atlas commit (cache key)
+        id: atlasref
+        run: echo "sha=$(git ls-remote https://github.com/CorvidLabs/fledge-plugin-atlas v1 | cut -f1)" >> "$GITHUB_OUTPUT"
 
-      # Map the repo BEFORE the WASM pkg is built. web/app/pkg does not exist yet,
-      # so the generated bundle never counts as orphan code and the atlas governs
-      # itself at 100%: the badges below reflect the committed source, not the build.
-      - name: Render self-atlas badges and components
-        env:
-          ATLAS_JSON: ${{ runner.temp }}/atlas.json
-          OUT_DIR: web/app/badges
-        run: |
-          mkdir -p "$OUT_DIR"
-          ./target/release/fledge-atlas . --json > "$ATLAS_JSON"
-          for c in coverage langmix treemap sunburst; do
-            ./target/release/fledge-atlas . --svg "$c" > "$OUT_DIR/$c.svg"
-          done
-          node -e '
-            const fs = require("fs");
-            const m = JSON.parse(fs.readFileSync(process.env.ATLAS_JSON, "utf8"));
-            const s = m.stats;
-            const out = process.env.OUT_DIR;
-            const teal = "0e6f66", gold = "b07a1e", clay = "a0492e";
-            const blue = "1e6fa8", gray = "5f6672", ink = "15181b";
-            const band = p => (p >= 90 ? teal : p >= 60 ? gold : clay);
-            const badge = (name, label, message, color) =>
-              fs.writeFileSync(`${out}/${name}.json`,
-                JSON.stringify({ schemaVersion: 1, label, message, color, labelColor: ink }));
-            const pct = Math.round(s.coverage_pct);
-            badge("coverage", "spec coverage", `${pct}%`, band(s.coverage_pct));
-            badge("orphans", "orphans", String(s.orphan_files), s.orphan_files ? clay : teal);
-            badge("phantoms", "phantoms", String(s.phantom_refs), s.phantom_refs ? clay : teal);
-            badge("specs", "specs", String(s.specs), blue);
-            badge("loc", "lines of code", s.total_loc.toLocaleString("en-US"), gray);
-            console.log(`badges: ${pct}% coverage, ${s.orphan_files} orphans, ${s.phantom_refs} phantoms, ${s.specs} specs`);
-          '
+      - name: Cache the fledge-atlas CLI
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/fledge-atlas
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: fledge-atlas-${{ runner.os }}-${{ steps.atlasref.outputs.sha }}
+
+      # Dogfood the published action to render THIS repo's own atlas, BEFORE the
+      # WASM pkg is built (web/app/pkg does not exist yet, so it never counts as
+      # orphan code and the atlas governs itself at 100%). Unlike the old
+      # hand-rolled render, the action also publishes atlas.json + history.json
+      # and the augur/attest trust panel, so this repo's own /trust/ row is
+      # complete instead of a 404.
+      - name: Render self-atlas (badges + atlas.json + history + trust)
+        uses: CorvidLabs/fledge-plugin-atlas@v1
+        with:
+          path: .
+          output-dir: web/app/badges
+          components: "coverage langmix treemap sunburst"
 
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
