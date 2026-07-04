@@ -70,6 +70,10 @@ jobs:
             && want="$(awk '{print $1}' "$sum")" && [ -n "$want" ] \
             && printf '%s  %s\n' "$want" "$bin" | sha256sum -c - ; then
             chmod +x "$bin"
+            # attest writes git notes, which need an author identity (unset on
+            # GitHub-hosted runners).
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git config user.name "github-actions[bot]"
             git fetch origin "+refs/notes/attest:refs/notes/attest" 2>/dev/null || true
             if "$bin" sign --commit HEAD --reviewer agent:ci --confidence 0.9 --tests-passed \
                  --verdict proceed --note "CI: cargo build + cargo test + atlas governance gate green" \
