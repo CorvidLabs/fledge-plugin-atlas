@@ -11,7 +11,7 @@ inputs:
     required: false
     default: "."
   output-dir:
-    description: "Directory to write atlas.json, the shields endpoint badges, and the SVG components into."
+    description: "Directory to write atlas.json, the shields endpoint badges, the SVG components, and the coverage history into."
     required: false
     default: "atlas"
   components:
@@ -93,3 +93,51 @@ runs:
             `| ${pct}% | ${s.orphan_files} | ${s.phantom_refs} | ${s.specs} |\n`);
           console.log(`atlas: ${pct}% coverage, ${s.orphan_files} orphans, ${s.phantom_refs} phantoms, ${s.specs} specs`);
         '
+
+    - name: Append coverage history
+      shell: bash
+      env:
+        OUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        # Maintain an append-only spec-coverage time-series on Pages, so the
+        # dashboard can show trajectory instead of a still frame. Fetch the
+        # previously published history, append this commit's numbers, dedupe by
+        # SHA, cap to a year of points, and write it back into the badges dir so
+        # the next deploy carries it forward. Fully fail-safe: a 404 (first run),
+        # an offline fetch, or a parse error just starts a fresh series, and a
+        # node failure never breaks the badge deploy.
+        owner="$(printf '%s' "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')"
+        name="${GITHUB_REPOSITORY#*/}"
+        name_lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+        # A user/org Pages repo (named <owner>.github.io) publishes at the domain
+        # root; every other (project) repo publishes under /<repo>/.
+        if [ "$name_lower" = "${owner}.github.io" ]; then
+          rel="badges/history.json"
+        else
+          rel="${name}/badges/history.json"
+        fi
+        curl -fsSL "https://${owner}.github.io/${rel}" \
+          -o "$OUT_DIR/history.prev.json" 2>/dev/null || printf '[]' > "$OUT_DIR/history.prev.json"
+        node -e '
+          const fs = require("fs");
+          const out = process.env.OUT_DIR;
+          const s = JSON.parse(fs.readFileSync(`${out}/atlas.json`, "utf8")).stats;
+          let hist = [];
+          try { hist = JSON.parse(fs.readFileSync(`${out}/history.prev.json`, "utf8")); } catch {}
+          if (!Array.isArray(hist)) hist = [];
+          const sha = (process.env.GITHUB_SHA || "").slice(0, 7);
+          const entry = {
+            date: new Date().toISOString().slice(0, 10),
+            sha,
+            coverage: Math.round(s.coverage_pct),
+            orphans: s.orphan_files,
+            phantoms: s.phantom_refs,
+            specs: s.specs,
+            loc: s.total_loc,
+          };
+          hist = hist.filter(h => h && h.sha !== sha).concat(entry);
+          if (hist.length > 365) hist = hist.slice(hist.length - 365);
+          fs.writeFileSync(`${out}/history.json`, JSON.stringify(hist));
+          console.log(`atlas history: ${hist.length} point(s), latest ${entry.coverage}% @ ${entry.sha || "?"}`);
+        ' || echo "::warning::atlas history step failed; skipping this point"
+        rm -f "$OUT_DIR/history.prev.json"
