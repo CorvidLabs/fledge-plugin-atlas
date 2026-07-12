@@ -11,14 +11,76 @@ spec: depgraph.spec.md
 
 ## Acceptance Criteria
 
+### REQ-depgraph-001
+
+The Atlas dependency graph SHALL ensure the following: Edges are read from each spec's `depends_on` list, resolved by module name against the model; self references and unresolved names are dropped, and duplicate edges collapse to one.
+
+Acceptance Criteria
+
 - Edges are read from each spec's `depends_on` list, resolved by module name against the model; self references and unresolved names are dropped, and duplicate edges collapse to one.
+
+### REQ-depgraph-002
+
+The Atlas dependency graph SHALL ensure the following: Nodes are placed in levels by the longest dependency chain beneath them; level 0 (depends on nothing) renders at the bottom row.
+
+Acceptance Criteria
+
 - Nodes are placed in levels by the longest dependency chain beneath them; level 0 (depends on nothing) renders at the bottom row.
+
+### REQ-depgraph-003
+
+The Atlas dependency graph SHALL ensure the following: Node radius follows `clamp(11 + sqrt(max(loc,1)) / 3.2, 13, 40)`, so larger specs draw larger discs within the 13 to 40 px bounds.
+
+Acceptance Criteria
+
 - Node radius follows `clamp(11 + sqrt(max(loc,1)) / 3.2, 13, 40)`, so larger specs draw larger discs within the 13 to 40 px bounds.
+
+### REQ-depgraph-004
+
+The Atlas dependency graph SHALL ensure the following: A node is a hub (ringed with `dep-ring` at `r + 4`) when its in-degree is >= 3, or when it is the single most-depended-on node and the max in-degree is >= 2.
+
+Acceptance Criteria
+
 - A node is a hub (ringed with `dep-ring` at `r + 4`) when its in-degree is >= 3, or when it is the single most-depended-on node and the max in-degree is >= 2.
+
+### REQ-depgraph-005
+
+The Atlas dependency graph SHALL ensure the following: Cycle-closing edges and their arrowheads render in `var(--bad)`, and the nodes they touch carry the `cyc` class.
+
+Acceptance Criteria
+
 - Cycle-closing edges and their arrowheads render in `var(--bad)`, and the nodes they touch carry the `cyc` class.
+
+### REQ-depgraph-006
+
+The Atlas dependency graph SHALL ensure the following: The viewBox is `-70 0 W+140 H`, reserving 70 px of horizontal slack per side so edge-most node labels are not clipped.
+
+Acceptance Criteria
+
 - The viewBox is `-70 0 W+140 H`, reserving 70 px of horizontal slack per side so edge-most node labels are not clipped.
+
+### REQ-depgraph-007
+
+The Atlas dependency graph SHALL ensure the following: With zero edges, the SVG wrapper is hidden and `#deps-note` shows the "No spec declares depends_on..." note (or "No specs found to map." when there are no specs).
+
+Acceptance Criteria
+
 - With zero edges, the SVG wrapper is hidden and `#deps-note` shows the "No spec declares depends_on..." note (or "No specs found to map." when there are no specs).
+
+### REQ-depgraph-008
+
+The Atlas dependency graph SHALL ensure the following: Hovering a node lights it and its immediate neighbours, marks connected edges/arrows `hot`, and fills `#deps-tip` with LOC, hub/cycle flags, and the depends-on / depended-on-by lists.
+
+Acceptance Criteria
+
 - Hovering a node lights it and its immediate neighbours, marks connected edges/arrows `hot`, and fills `#deps-tip` with LOC, hub/cycle flags, and the depends-on / depended-on-by lists.
+
+### REQ-depgraph-009
+
+The Atlas dependency graph SHALL ensure the following: A summary line in `#deps-note` reports participant count, edge count, hubs, and cycle-edge count.
+
+Acceptance Criteria
+
 - A summary line in `#deps-note` reports participant count, edge count, hubs, and cycle-edge count.
 
 ## Constraints

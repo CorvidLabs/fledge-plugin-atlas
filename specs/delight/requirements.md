@@ -18,29 +18,107 @@ spec: delight.spec.md
 
 ## Acceptance Criteria
 
+### REQ-delight-001
+
+The Atlas delight visualizations SHALL ensure the following: The treemap renders one rectangle per file in `data.files`, sized by
+  `max(loc, 1)` via a squarified layout in a `1180 x 620` viewBox.
+
+Acceptance Criteria
+
 - The treemap renders one rectangle per file in `data.files`, sized by
   `max(loc, 1)` via a squarified layout in a `1180 x 620` viewBox.
+
+### REQ-delight-002
+
+The Atlas delight visualizations SHALL ensure the following: Fill colour is chosen strictly by governance state: orphan -> gray `NOSPEC`,
+  overlap -> amber `SHARED`, otherwise teal `GOVERNED`; when
+  `stats.test_coverage_pct` is present and the file has a `test_pct`, the
+  governed fill becomes `color-mix(in srgb, var(--chart-4) <pct>%, var(--bad))`.
+
+Acceptance Criteria
+
 - Fill colour is chosen strictly by governance state: orphan -> gray `NOSPEC`,
   overlap -> amber `SHARED`, otherwise teal `GOVERNED`; when
   `stats.test_coverage_pct` is present and the file has a `test_pct`, the
   governed fill becomes `color-mix(in srgb, var(--chart-4) <pct>%, var(--bad))`.
+
+### REQ-delight-003
+
+The Atlas delight visualizations SHALL ensure the following: All `var()` / `color-mix()` fills are applied through `element.style.fill`,
+  never `setAttribute('fill', ...)`.
+
+Acceptance Criteria
+
 - All `var()` / `color-mix()` fills are applied through `element.style.fill`,
   never `setAttribute('fill', ...)`.
+
+### REQ-delight-004
+
+The Atlas delight visualizations SHALL ensure the following: The sunburst draws an inner ring of spec bands plus an orphan band when
+  unspecced files exist, an outer ring of each band's files subdivided by loc,
+  and a centre label showing `test_coverage_pct` (or `coverage_pct` when test
+  coverage is unknown) with the matching "test coverage" / "spec coverage"
+  caption.
+
+Acceptance Criteria
+
 - The sunburst draws an inner ring of spec bands plus an orphan band when
   unspecced files exist, an outer ring of each band's files subdivided by loc,
   and a centre label showing `test_coverage_pct` (or `coverage_pct` when test
   coverage is unknown) with the matching "test coverage" / "spec coverage"
   caption.
+
+### REQ-delight-005
+
+The Atlas delight visualizations SHALL ensure the following: The quadrant plots one dot per spec using the spec's engine-assigned `color`,
+  with X = commits (or recency of `updated_ts`) and Y = `test_pct` (or
+  `share_pct`), and shades and labels the high-churn / low-coverage "watch"
+  corner.
+
+Acceptance Criteria
+
 - The quadrant plots one dot per spec using the spec's engine-assigned `color`,
   with X = commits (or recency of `updated_ts`) and Y = `test_pct` (or
   `share_pct`), and shades and labels the high-churn / low-coverage "watch"
   corner.
+
+### REQ-delight-006
+
+The Atlas delight visualizations SHALL ensure the following: A single legend built into `#tm-legend` explains the palette for both the
+  treemap and the sunburst and always ends with "size = lines of code".
+
+Acceptance Criteria
+
 - A single legend built into `#tm-legend` explains the palette for both the
   treemap and the sunburst and always ends with "size = lines of code".
+
+### REQ-delight-007
+
+The Atlas delight visualizations SHALL ensure the following: Owning specs appear only in tooltips (via resolved `specs` indices), never as
+  distinct tile colours.
+
+Acceptance Criteria
+
 - Owning specs appear only in tooltips (via resolved `specs` indices), never as
   distinct tile colours.
+
+### REQ-delight-008
+
+The Atlas delight visualizations SHALL ensure the following: Every model-derived tooltip / label string is escaped with `esc()` before
+  being written as `innerHTML`.
+
+Acceptance Criteria
+
 - Every model-derived tooltip / label string is escaped with `esc()` before
   being written as `innerHTML`.
+
+### REQ-delight-009
+
+The Atlas delight visualizations SHALL ensure the following: Tile and arc labels remain legible on any fill in both themes via the soft
+  label glow and `var(--bg)` strokes.
+
+Acceptance Criteria
+
 - Tile and arc labels remain legible on any fill in both themes via the soft
   label glow and `var(--bg)` strokes.
 

@@ -19,20 +19,83 @@ spec: threemd.spec.md
 
 ## Acceptance Criteria
 
+### REQ-threemd-001
+
+The Atlas 3MD experience SHALL ensure the following: Each `.tmd` viewer renders `model.threemd[data-doc].planes` and starts at
+  plane 0; prev/next/slider move within `[0, n-1]` and clamp at the ends.
+
+Acceptance Criteria
+
 - Each `.tmd` viewer renders `model.threemd[data-doc].planes` and starts at
   plane 0; prev/next/slider move within `[0, n-1]` and clamp at the ends.
+
+### REQ-threemd-002
+
+The Atlas 3MD experience SHALL ensure the following: The label reads `z=<z> - <label>  (<i+1>/<n>)`, omitting the `z=` prefix when
+  a plane's `z` is `'-'`.
+
+Acceptance Criteria
+
 - The label reads `z=<z> - <label>  (<i+1>/<n>)`, omitting the `z=` prefix when
   a plane's `z` is `'-'`.
+
+### REQ-threemd-003
+
+The Atlas 3MD experience SHALL ensure the following: Plane bodies render only escaped, allow-listed Markdown: headings, `-`/`*`
+  lists, paragraphs, `` `code` ``, `**strong**`, cross-links, and links.
+
+Acceptance Criteria
+
 - Plane bodies render only escaped, allow-listed Markdown: headings, `-`/`*`
   lists, paragraphs, `` `code` ``, `**strong**`, cross-links, and links.
+
+### REQ-threemd-004
+
+The Atlas 3MD experience SHALL ensure the following: Link hrefs are kept only for relative URLs or `https`/`http`/`mailto`
+  schemes; any other scheme becomes `#`. Quotes in hrefs are percent-encoded.
+
+Acceptance Criteria
+
 - Link hrefs are kept only for relative URLs or `https`/`http`/`mailto`
   schemes; any other scheme becomes `#`. Quotes in hrefs are percent-encoded.
+
+### REQ-threemd-005
+
+The Atlas 3MD experience SHALL ensure the following: Clicking an `.xlink` shows the plane whose `z` equals `data-z`, or does
+  nothing if none matches.
+
+Acceptance Criteria
+
 - Clicking an `.xlink` shows the plane whose `z` equals `data-z`, or does
   nothing if none matches.
+
+### REQ-threemd-006
+
+The Atlas 3MD experience SHALL ensure the following: `copy-stub` output is byte-for-byte identical to `--scaffold` for `clusters[0]`
+  (frontmatter keys, headings, file list, LOC comma grouping, singular/plural).
+
+Acceptance Criteria
+
 - `copy-stub` output is byte-for-byte identical to `--scaffold` for `clusters[0]`
   (frontmatter keys, headings, file list, LOC comma grouping, singular/plural).
+
+### REQ-threemd-007
+
+The Atlas 3MD experience SHALL ensure the following: Copy actions use `navigator.clipboard` and fall back to a textarea +
+  `execCommand('copy')`; total failure flashes "copy failed".
+
+Acceptance Criteria
+
 - Copy actions use `navigator.clipboard` and fall back to a textarea +
   `execCommand('copy')`; total failure flashes "copy failed".
+
+### REQ-threemd-008
+
+The Atlas 3MD experience SHALL ensure the following: `copy-review`/`copy-orphans` flash the row count; `copy-orphans` is sorted by
+  LOC descending.
+
+Acceptance Criteria
+
 - `copy-review`/`copy-orphans` flash the row count; `copy-orphans` is sorted by
   LOC descending.
 

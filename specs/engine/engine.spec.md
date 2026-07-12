@@ -45,6 +45,60 @@ The engine is a Cargo workspace so it can run both as a CLI and in the browser:
 
 ## Public API
 
+| Export | Description |
+| --- | --- |
+| `CODE_EXTS` | Recognized source-code extensions. |
+| `SKIP_DIRS` | Directories excluded from repository scanning. |
+| `IgnoreSet` | Parsed repository coverage-scope exclusions. |
+| `parse` | Parse ignore rules. |
+| `len` | Number of parsed ignore rules. |
+| `is_empty` | Whether an ignore set contains no rules. |
+| `matches` | Test a repository-relative path against ignore rules. |
+| `Spec` | Parsed canonical specification input. |
+| `Source` | Discovered source-file input. |
+| `days_from_civil` | Convert a civil date to an epoch-day offset. |
+| `parse_spec_str` | Parse one canonical specification document. |
+| `COMPANION_NAMES` | Recognized companion document names. |
+| `split_frontmatter` | Split document frontmatter from its body. |
+| `looks_generated` | Classify generated, vendored, or minified paths. |
+| `attach_coverage_str` | Attach lcov data to discovered sources. |
+| `GitData` | Aggregated repository history used by the model. |
+| `CommitInput` | One timestamped commit and its changed paths. |
+| `build_git_data` | Fold commit inputs into deterministic history data. |
+| `civil_from_days` | Convert an epoch-day offset to a civil date. |
+| `weekday` | Derive a weekday for a civil date. |
+| `Coverage` | Spec ownership and coverage totals. |
+| `attach_specs` | Map specs onto sources and existing paths. |
+| `Model` | Serializable root shared by JSON, HTML, SVG, and 3MD. |
+| `Trust` | Trust-toolchain summary embedded in the model. |
+| `AttestSummary` | Aggregate Attest provenance status. |
+| `Attestation` | One provenance record included in the atlas. |
+| `AugurSummary` | Aggregate Augur risk status. |
+| `ThreeMdDoc` | One parsed 3MD document. |
+| `ThreeMdPlane` | One plane within a 3MD document. |
+| `Calendar` | Commit-activity calendar model. |
+| `DayOut` | One rendered calendar day. |
+| `Pet` | Corvid Pet presentation data. |
+| `Stats` | Headline governance and coverage statistics. |
+| `SpecOut` | Serialized per-spec output. |
+| `CompanionOut` | Serialized companion document. |
+| `FileOut` | Serialized per-file output. |
+| `ClusterOut` | Ranked orphan cluster. |
+| `ClusterFile` | File within an orphan cluster. |
+| `LangOut` | Language summary. |
+| `PhantomOut` | Broken governed-path reference. |
+| `Action` | Deterministic next action for an agent. |
+| `build_model` | Build the single serializable atlas model. |
+| `scaffold_spec` | Create a ready-to-save spec skeleton. |
+| `parse_threemd` | Parse a 3MD deck for embedded presentation. |
+| `normalize` | Normalize repository paths for matching. |
+| `lang_for` | Classify a source path by language. |
+| `fmt_date` | Format model dates consistently. |
+| `render_html` | Render the self-contained HTML atlas. |
+| `commas` | Format integer counts with separators. |
+| `SVG_COMPONENTS` | Supported standalone SVG component names. |
+| `render_svg` | Render one deterministic standalone SVG component. |
+
 The public contract is the CLI, plus the pure pipeline functions and types in
 `atlas-core` that shape the `Model`.
 
@@ -71,7 +125,7 @@ The public contract is the CLI, plus the pure pipeline functions and types in
 The pure functions live in `atlas-core`; the CLI (`atlas-cli`) does the IO that
 feeds them (walking the tree, reading files and lcov, mining `git log`).
 
-| Function | Crate | Signature | Description |
+| Export | Crate | Signature | Description |
 |----------|-------|-----------|-------------|
 | `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor), parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. |
 | `parse_spec_str` | core | `fn(&str, &str) -> Option<Spec>` | Parse one spec from its relative path and text, rendering its prose to HTML at parse time. Pure. |
@@ -86,7 +140,7 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 
 ### Key Types
 
-| Type | Description |
+| Export | Description |
 |------|-------------|
 | `Cli` | clap derive parser for the flags above. |
 | `Spec` | One parsed `*.spec.md`: module, status, version, owner, governed `files`, `depends_on`, companion docs, section count, optional drift. |

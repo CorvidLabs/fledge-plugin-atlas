@@ -23,18 +23,22 @@ client-side, with no server.
 
 ## Public API
 
-`render(project_json: &str) -> Result<String, JsError>`
+| Export | Signature | Description |
+| --- | --- | --- |
+| `render` | `fn(&str) -> Result<String, JsError>` | Deserialize a project snapshot and return its self-contained atlas HTML. |
 
-The input `Project` JSON has:
+The input project JSON carries a display name, fetched file contents, the full
+repository path set, optional lcov text, newest-first commit inputs, and an
+optional injected Unix timestamp. These fields remain an internal wire shape,
+not independent Rust exports.
 
-| Field | Shape | Meaning |
-|-------|-------|---------|
-| `project` | string | Display name for the atlas (usually `owner/repo`). |
-| `files` | `[{ path, contents }]` | Fetched files: every `*.spec.md`, recognized code file, `.3md` deck, and any `lcov.info`. |
-| `paths` | `[string]` | Every path in the repository tree, whether or not its contents were fetched. |
-| `lcov` | string or null | Optional lcov report text. |
-| `commits` | `[{ ts, files: [path] }]` | Commits newest-first, reconstructed from the GitHub API. |
-| `now` | integer or null | Current unix time for recency; falls back to the newest commit. |
+## Behavioral Examples
+
+```text
+Given a valid repository snapshot with specs, sources, paths, and commits
+When the browser calls render with its JSON serialization
+Then the binding returns the same self-contained HTML model as the CLI pipeline
+```
 
 ## Invariants
 
