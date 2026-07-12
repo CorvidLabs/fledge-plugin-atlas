@@ -13,6 +13,56 @@ spec: components.spec.md
 - As a reader with multiple project atlases open over time, I want each project's
   choices remembered separately so hiding a section in one does not affect another.
 
+## Durable Requirements
+
+### REQ-components-001
+
+The implementation SHALL satisfy the following criterion: Clicking a `.cbtoggle` shows or hides the `section` named by its `data-target` by clearing or setting `style.display`.
+
+Acceptance Criteria
+
+- Clicking a `.cbtoggle` shows or hides the `section` named by its `data-target` by clearing or setting `style.display`.
+
+### REQ-components-002
+
+The implementation SHALL satisfy the following criterion: Every toggle's `.on` class and `aria-pressed` attribute reflect whether its section is shown, both on initial load and after each click.
+
+Acceptance Criteria
+
+- Every toggle's `.on` class and `aria-pressed` attribute reflect whether its section is shown, both on initial load and after each click.
+
+### REQ-components-003
+
+The implementation SHALL satisfy the following criterion: Hidden sections are stored under the `atlas-hidden:<document.title>` key as a JSON set (`{"<id>":1}`) and restored on the next load of the same atlas.
+
+Acceptance Criteria
+
+- Hidden sections are stored under the `atlas-hidden:<document.title>` key as a JSON set (`{"<id>":1}`) and restored on the next load of the same atlas.
+
+### REQ-components-004
+
+The implementation SHALL satisfy the following criterion: Removing a section from the hidden set (toggling it back on) deletes its id from the stored object.
+
+Acceptance Criteria
+
+- Removing a section from the hidden set (toggling it back on) deletes its id from the stored object.
+
+### REQ-components-005
+
+The implementation SHALL satisfy the following criterion: The script does nothing and throws nothing when `#compbar` is absent.
+
+Acceptance Criteria
+
+- The script does nothing and throws nothing when `#compbar` is absent.
+
+### REQ-components-006
+
+The implementation SHALL satisfy the following criterion: Invalid stored JSON, unknown target ids, and an unavailable `localStorage` are all handled without breaking the page.
+
+Acceptance Criteria
+
+- Invalid stored JSON, unknown target ids, and an unavailable `localStorage` are all handled without breaking the page.
+
 ## Acceptance Criteria
 
 - Clicking a `.cbtoggle` shows or hides the `section` named by its `data-target`

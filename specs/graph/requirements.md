@@ -20,6 +20,88 @@ spec: graph.spec.md
 - As a reviewer capturing a static image, I want the graph to appear fully
   settled without animation, so a screenshot matches the live view.
 
+## Durable Requirements
+
+### REQ-graph-001
+
+The implementation SHALL satisfy the following criterion: On load the graph pre-warms synchronously (200 ticks grouped, 260 network) and draws once; no animation is visible before first paint.
+
+Acceptance Criteria
+
+- On load the graph pre-warms synchronously (200 ticks grouped, 260 network) and draws once; no animation is visible before first paint.
+
+### REQ-graph-002
+
+The implementation SHALL satisfy the following criterion: The default colour mode is governance with exactly three states: has a spec, shared by 2 or more specs, and no spec, using the shared palette tokens.
+
+Acceptance Criteria
+
+- The default colour mode is governance with exactly three states: has a spec, shared by 2 or more specs, and no spec, using the shared palette tokens.
+
+### REQ-graph-003
+
+The implementation SHALL satisfy the following criterion: Selecting any of the five colour modes (`gov`, `spec`, `lang`, `cov`, `age`) recolours all visible file dots without rebuilding the layout.
+
+Acceptance Criteria
+
+- Selecting any of the five colour modes (`gov`, `spec`, `lang`, `cov`, `age`) recolours all visible file dots without rebuilding the layout.
+
+### REQ-graph-004
+
+The implementation SHALL satisfy the following criterion: Clicking or activating a spec focuses its subgraph (that spec plus specs that share a file), fits to it, and displays the focus chip; Escape or the chip clears focus.
+
+Acceptance Criteria
+
+- Clicking or activating a spec focuses its subgraph (that spec plus specs that share a file), fits to it, and displays the focus chip; Escape or the chip clears focus.
+
+### REQ-graph-005
+
+The implementation SHALL satisfy the following criterion: Switching to the network layout re-seeds positions, draws link lines, and re-settles synchronously.
+
+Acceptance Criteria
+
+- Switching to the network layout re-seeds positions, draws link lines, and re-settles synchronously.
+
+### REQ-graph-006
+
+The implementation SHALL satisfy the following criterion: Exactly one node is in the Tab order at any time; arrow keys, Home, and End move focus; Enter or Space focuses a spec; Escape clears focus.
+
+Acceptance Criteria
+
+- Exactly one node is in the Tab order at any time; arrow keys, Home, and End move focus; Enter or Space focuses a spec; Escape clears focus.
+
+### REQ-graph-007
+
+The implementation SHALL satisfy the following criterion: Every node exposes a plain-text accessible name (LOC, percent tested, owning specs), and an off-screen summary states spec, file, and orphan counts.
+
+Acceptance Criteria
+
+- Every node exposes a plain-text accessible name (LOC, percent tested, owning specs), and an off-screen summary states spec, file, and orphan counts.
+
+### REQ-graph-008
+
+The implementation SHALL satisfy the following criterion: All model-derived text in tooltips is HTML-escaped; no input can inject markup.
+
+Acceptance Criteria
+
+- All model-derived text in tooltips is HTML-escaped; no input can inject markup.
+
+### REQ-graph-009
+
+The implementation SHALL satisfy the following criterion: When `prefers-reduced-motion: reduce` is set, every reheat settles synchronously with no animation loop.
+
+Acceptance Criteria
+
+- When `prefers-reduced-motion: reduce` is set, every reheat settles synchronously with no animation loop.
+
+### REQ-graph-010
+
+The implementation SHALL satisfy the following criterion: Orphan files are hidden by default when there are more than 140 of them and can be toggled into a size-capped grid.
+
+Acceptance Criteria
+
+- Orphan files are hidden by default when there are more than 140 of them and can be toggled into a size-capped grid.
+
 ## Acceptance Criteria
 
 - On load the graph pre-warms synchronously (200 ticks grouped, 260 network) and
