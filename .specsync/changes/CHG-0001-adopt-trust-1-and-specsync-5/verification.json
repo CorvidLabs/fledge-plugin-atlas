@@ -1,13 +1,13 @@
 {
-  "timestamp": 1783904251,
-  "commit": "2601e893cd3eddfffa5732df944a85f406c08178",
+  "timestamp": 1783915483,
+  "commit": "760110ee7b76207b464cd61f157412f061b698c5",
   "contract_digest": "1207f60ffee5b0090861f92ae76eb7e81e8eaf748274e692fcbc3e9759d688d2",
-  "workspace_digest": "4456e42161aebc98c74c1347f1ed40e6d5bd4b358dd6d0c2dd8f759697874f99",
-  "acceptance_input_digest": "f87e879c9eb6e13282685c33d2ac1783da885309d60276932215bae417b11bb3",
+  "workspace_digest": "166abcc77e5e169d2f616327e4e662746536f82bf27eabf64b5935530c3dbc1b",
+  "acceptance_input_digest": "892a65b52acd54a06a8bca5bc46a2c1164b974fe14fae6dd39ad61df7ef7ecd7",
   "passed": true,
   "commands": [
     {
-      "command": "cargo test --release --locked",
+      "command": "fledge lanes run verify",
       "success": true,
       "exit_code": 0
     }

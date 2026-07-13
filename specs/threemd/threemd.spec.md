@@ -12,6 +12,8 @@ depends_on:
 
 # Threemd
 
+<!-- specsync-ignore: requirements-companion -->
+
 ## Purpose
 
 The `threemd` module is the client-side JavaScript embedded (via `include_str!`)
