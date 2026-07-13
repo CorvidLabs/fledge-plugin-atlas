@@ -6,6 +6,20 @@
       "timestamp": 1783830620,
       "digest": "eaeb24a96f527281e7d89ba6a122a2bf5dc63a56caccac34b5a03a47ec194374",
       "note": "Authorized by the approved organization-wide SpecSync 5 / Trust 1 migration plan."
+    },
+    {
+      "gate": "definition",
+      "actor": "0xLeif",
+      "timestamp": 1783915699,
+      "digest": "1207f60ffee5b0090861f92ae76eb7e81e8eaf748274e692fcbc3e9759d688d2",
+      "note": "Reviewed the exact qualified IgnoreSet and scaffold contracts with narrow SpecSync 5.0.1 compatibility annotations; no runtime or requirement semantics changed."
+    },
+    {
+      "gate": "acceptance",
+      "actor": "0xLeif",
+      "timestamp": 1783915707,
+      "digest": "b15150fb7612e549786c08f87d8e9be34a7be112ce33b19c98411fa3198aad08",
+      "note": "Accepted after strict 10/10 SpecSync validation at 100% coverage and locked release verification of the workspace plus excluded WASM crate."
     }
   ]
 }
