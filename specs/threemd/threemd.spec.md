@@ -91,8 +91,8 @@ handling (`inline`) escapes `&<>` first, then renders `` `code` ``,
    `--scaffold` CLI flag prints for the same cluster, so a human and an agent
    both start the first spec from an identical file: same frontmatter keys
    (`module`, `status: draft`, `version: 0.1.0`, `owner: TODO`, `files:`), same
-   headings (a module title followed by level-two `Purpose` and `Requirements`
-   sections), same TODO
+   headings (exactly `# <module> spec`, `## Purpose`, and
+   `## Requirements`), same TODO
    prose including file count, singular/plural, and comma-grouped LOC.
 4. Clipboard copy is resilient: it tries `navigator.clipboard.writeText` first,
    and on any failure falls back to a hidden `<textarea>` plus

@@ -53,10 +53,10 @@ The public contract is the CLI, plus the pure pipeline functions and types in
 | `CODE_EXTS` | Source-code extensions counted by the engine. |
 | `SKIP_DIRS` | Build, vendor, metadata, and dependency directories excluded from discovery. |
 | `IgnoreSet` | Parsed per-repository coverage-scope filter. |
-| `parse` | Parse `.atlasignore` text into an `IgnoreSet`. |
-| `len` | Return the number of loaded ignore patterns. |
-| `is_empty` | Report whether an ignore set contains no patterns. |
-| `matches` | Test a normalized repository-relative path against an ignore set. |
+| `IgnoreSet::parse` | Parse `.atlasignore` text into an `IgnoreSet`. |
+| `IgnoreSet::len` | Return the number of loaded ignore patterns. |
+| `IgnoreSet::is_empty` | Report whether an ignore set contains no patterns. |
+| `IgnoreSet::matches` | Test a normalized repository-relative path against an ignore set. |
 | `Spec` | Parsed canonical spec metadata, companions, and rendered prose. |
 | `Source` | Discovered source path, LOC, language, ownership, and optional test coverage. |
 | `days_from_civil` | Convert a Gregorian date to the engine's Unix-relative day number. |
@@ -130,7 +130,7 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 | `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor), parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. |
 | `parse_spec_str` | core | `fn(&str, &str) -> Option<Spec>` | Parse one spec from its relative path and text, rendering its prose to HTML at parse time. Pure. |
 | `load_sources` | cli | `fn(&Path, &IgnoreSet) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS`, generated/minified/vendored files, and any path the `IgnoreSet` scopes out. |
-| `IgnoreSet::parse` / `matches` | core | `fn(&str) -> IgnoreSet`, `fn(&self, &str) -> bool` | Parse an `.atlasignore` file (read from the project root by the CLI) into a per-repo coverage-scope filter, and test a repo-relative path against it. Pattern forms, root-anchored: `dir/` (a directory and its contents), `*.ext` (an extension), or a bare `path` (that exact file, or a directory of that name). Scoped-out files leave the source set entirely, weighing on neither coverage nor orphans. |
+| `IgnoreSet::parse` / `IgnoreSet::len` / `IgnoreSet::is_empty` / `IgnoreSet::matches` | core | `fn(&str) -> IgnoreSet`, `fn(&self) -> usize`, `fn(&self) -> bool`, `fn(&self, &str) -> bool` | Parse an `.atlasignore` file (read from the project root by the CLI), inspect its pattern count or emptiness, and test a repo-relative path against it. Pattern forms, root-anchored: `dir/` (a directory and its contents), `*.ext` (an extension), or a bare `path` (that exact file, or a directory of that name). Scoped-out files leave the source set entirely, weighing on neither coverage nor orphans. |
 | `attach_coverage_str` | core | `fn(&str, &str, &mut [Source])` | Parse lcov text and attach per-file (lines hit, lines found). The CLI's `attach_coverage` finds and reads the report first. |
 | `attach_specs` | core | `fn(&[Spec], &mut [Source], &HashSet<String>) -> Coverage` | Map each spec's `files:` onto sources; `existing_paths` is the spec-declared paths that exist, so a governed non-code file is not a phantom. |
 | `build_git_data` | core | `fn(&[CommitInput], &[Spec], &[Source], i64) -> GitData` | Fold a newest-first commit list into update history. The CLI mines the commits from `git log`; the web app from the GitHub API. |

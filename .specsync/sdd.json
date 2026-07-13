@@ -3,16 +3,32 @@
   "enabled": true,
   "require_change_for_meaningful_files": true,
   "meaningful_paths": [
-    "src/",
-    "tests/",
-    "site/",
     ".github/",
+    ".claude/",
+    ".codex/",
+    ".cursor/",
+    ".gemini/",
+    ".specsync/config.toml",
+    ".specsync/config.json",
+    ".specsync/sdd.json",
+    ".specsync/version",
+    "specs/",
     "crates/atlas-core/src/",
     "crates/atlas-cli/src/",
     "crates/atlas-wasm/src/",
+    "crates/atlas-core/Cargo.toml",
+    "crates/atlas-cli/Cargo.toml",
+    "crates/atlas-wasm/Cargo.toml",
+    "crates/atlas-wasm/Cargo.lock",
     "web/app/",
+    ".atlasignore",
+    ".attest.json",
+    ".augur.toml",
+    ".trust.toml",
+    "AGENTS.md",
     "Cargo.toml",
     "Cargo.lock",
+    "fledge.toml",
     "action.yml",
     "package.json",
     "bun.lock",
@@ -25,18 +41,15 @@
     "go.sum",
     "pyproject.toml",
     "uv.lock",
-    "requirements.txt",
-    ".specsync/sdd.json",
-    ".specsync/config.toml",
-    ".specsync/config.json",
-    ".specsync/version"
+    "requirements.txt"
   ],
   "ignored_paths": [
-    ".specsync/",
-    "specs/"
+    ".specsync/changes/",
+    ".specsync/hashes.json",
+    ".specsync/change.lock"
   ],
   "verification_commands": [
-    "cargo test --release --locked"
+    "fledge lanes run verify"
   ],
   "custom_artifacts": {},
   "principles_file": null

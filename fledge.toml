@@ -3,12 +3,14 @@
 
 [tasks]
 build = "cargo build --release --locked"
-test = "cargo test --locked"
-lint = "cargo clippy -- -D warnings"
+test = "cargo test --release --locked"
+lint = "cargo clippy --locked -- -D warnings"
 fmt = "cargo fmt --check"
+wasm-build = "cargo build --release --locked --manifest-path crates/atlas-wasm/Cargo.toml"
+wasm-test = "cargo test --release --locked --manifest-path crates/atlas-wasm/Cargo.toml"
 # Build the WASM engine into the web app (needs wasm-pack + the wasm32 target).
 web = "wasm-pack build crates/atlas-wasm --target web --release --out-dir web/app/pkg --out-name atlas"
 
 [lanes.verify]
 description = "Format, lint, build, and test Atlas"
-steps = [{ parallel = ["fmt", "lint"] }, "test", "build"]
+steps = [{ parallel = ["fmt", "lint"] }, "test", "build", "wasm-test", "wasm-build"]

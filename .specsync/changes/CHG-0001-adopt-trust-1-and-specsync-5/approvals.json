@@ -6,20 +6,6 @@
       "timestamp": 1783830620,
       "digest": "eaeb24a96f527281e7d89ba6a122a2bf5dc63a56caccac34b5a03a47ec194374",
       "note": "Authorized by the approved organization-wide SpecSync 5 / Trust 1 migration plan."
-    },
-    {
-      "gate": "definition",
-      "actor": "0xLeif",
-      "timestamp": 1783904244,
-      "digest": "1207f60ffee5b0090861f92ae76eb7e81e8eaf748274e692fcbc3e9759d688d2",
-      "note": "Reviewed Atlas adoption after strict 100% coverage, 40 native tests, hosted coverage/CodeQL/Trust success, and required trust branch protection."
-    },
-    {
-      "gate": "acceptance",
-      "actor": "0xLeif",
-      "timestamp": 1783904260,
-      "digest": "50cd310f720127d6eee30c5446db128eba64f735d1ebc94c5d54e93a45baf776",
-      "note": "Approved after strict Atlas adoption verification, 40 passing release tests, hosted technical success, and required trust branch protection."
     }
   ]
 }
