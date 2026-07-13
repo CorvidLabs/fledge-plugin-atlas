@@ -48,6 +48,60 @@ The engine is a Cargo workspace so it can run both as a CLI and in the browser:
 The public contract is the CLI, plus the pure pipeline functions and types in
 `atlas-core` that shape the `Model`.
 
+| Symbol | Contract |
+|--------|----------|
+| `CODE_EXTS` | Source-code extensions counted by the engine. |
+| `SKIP_DIRS` | Build, vendor, metadata, and dependency directories excluded from discovery. |
+| `IgnoreSet` | Parsed per-repository coverage-scope filter. |
+| `parse` | The `IgnoreSet::parse` method parses `.atlasignore` text into an `IgnoreSet`. |
+| `len` | The `IgnoreSet::len` method returns the number of loaded ignore patterns. |
+| `is_empty` | The `IgnoreSet::is_empty` method reports whether an ignore set contains no patterns. |
+| `matches` | The `IgnoreSet::matches` method tests a normalized repository-relative path against an ignore set. |
+| `Spec` | Parsed canonical spec metadata, companions, and rendered prose. |
+| `Source` | Discovered source path, LOC, language, ownership, and optional test coverage. |
+| `days_from_civil` | Convert a Gregorian date to the engine's Unix-relative day number. |
+| `parse_spec_str` | Parse one canonical spec from its path and Markdown text. |
+| `COMPANION_NAMES` | Stable ordered names of recognized spec companion documents. |
+| `split_frontmatter` | Split optional YAML frontmatter from a Markdown body. |
+| `looks_generated` | Detect generated, minified, vendored, or lockfile content excluded from source coverage. |
+| `attach_coverage_str` | Attach an LCOV report to matching discovered sources. |
+| `GitData` | Derived repository-history facts used by recency and calendar views. |
+| `CommitInput` | Timestamp and changed-path footprint supplied by CLI or browser callers. |
+| `build_git_data` | Derive spec/file recency and calendar data from newest-first commits. |
+| `civil_from_days` | Convert the engine's day number back to a Gregorian date. |
+| `weekday` | Compute the Monday-based weekday index for a day number. |
+| `Coverage` | Ownership totals, orphan/overlap counts, and phantom references. |
+| `attach_specs` | Map specs to sources and compute the `Coverage` result. |
+| `Model` | Serializable root shared by JSON, HTML, SVG, and agent surfaces. |
+| `Trust` | Optional combined provenance/risk summary embedded in a model. |
+| `AttestSummary` | Attestation-ledger counts and latest-verdict summary. |
+| `Attestation` | One serialized attestation record. |
+| `AugurSummary` | Risk score, verdict, findings, and scan metadata. |
+| `ThreeMdDoc` | Parsed `.3md` document included in the model. |
+| `ThreeMdPlane` | One parsed `.3md` plane and its rendered content. |
+| `Calendar` | Calendar bounds, activity days, and active weeks. |
+| `DayOut` | Serializable commit activity for one calendar day. |
+| `Pet` | Deterministic atlas-pet state derived from model health. |
+| `Stats` | Headline spec, source, ownership, phantom, and coverage totals. |
+| `SpecOut` | Serializable per-spec facts and governed-file indices. |
+| `CompanionOut` | Serializable companion path and document kind. |
+| `FileOut` | Serializable per-source ownership and coverage facts. |
+| `ClusterOut` | One orphan cluster proposed for focused specification work. |
+| `ClusterFile` | Source path and LOC member of an orphan cluster. |
+| `LangOut` | Per-language file and LOC totals. |
+| `PhantomOut` | One spec-to-missing-path reference. |
+| `Action` | Deterministic next action, severity, rationale, target, and Fledge command. |
+| `build_model` | Fold specs, sources, coverage, and optional git data into one `Model`. |
+| `scaffold_spec` | Produce a canonical spec skeleton for an orphan cluster. |
+| `parse_threemd` | Parse one `.3md` document into ordered planes. |
+| `normalize` | Normalize repository paths to slash-separated relative form. |
+| `lang_for` | Map a recognized source extension to its display language. |
+| `fmt_date` | Format a Unix timestamp as an ISO calendar date. |
+| `render_html` | Render a complete self-contained atlas from one model. |
+| `commas` | Format an integer with thousands separators for rendered output. |
+| `SVG_COMPONENTS` | Stable names accepted by standalone SVG rendering. |
+| `render_svg` | Render one deterministic standalone SVG component. |
+
 ### CLI Flags
 
 | Flag | Value | Purpose |
@@ -76,7 +130,7 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 | `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor), parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. |
 | `parse_spec_str` | core | `fn(&str, &str) -> Option<Spec>` | Parse one spec from its relative path and text, rendering its prose to HTML at parse time. Pure. |
 | `load_sources` | cli | `fn(&Path, &IgnoreSet) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS`, generated/minified/vendored files, and any path the `IgnoreSet` scopes out. |
-| `IgnoreSet::parse` / `matches` | core | `fn(&str) -> IgnoreSet`, `fn(&self, &str) -> bool` | Parse an `.atlasignore` file (read from the project root by the CLI) into a per-repo coverage-scope filter, and test a repo-relative path against it. Pattern forms, root-anchored: `dir/` (a directory and its contents), `*.ext` (an extension), or a bare `path` (that exact file, or a directory of that name). Scoped-out files leave the source set entirely, weighing on neither coverage nor orphans. |
+| `parse` / `len` / `is_empty` / `matches` | core | `fn(&str) -> IgnoreSet`, `fn(&self) -> usize`, `fn(&self) -> bool`, `fn(&self, &str) -> bool` | The fully qualified methods are `IgnoreSet::parse`, `IgnoreSet::len`, `IgnoreSet::is_empty`, and `IgnoreSet::matches`. They parse an `.atlasignore` file (read from the project root by the CLI), inspect its pattern count or emptiness, and test a repo-relative path against it. Pattern forms, root-anchored: `dir/` (a directory and its contents), `*.ext` (an extension), or a bare `path` (that exact file, or a directory of that name). Scoped-out files leave the source set entirely, weighing on neither coverage nor orphans. |
 | `attach_coverage_str` | core | `fn(&str, &str, &mut [Source])` | Parse lcov text and attach per-file (lines hit, lines found). The CLI's `attach_coverage` finds and reads the report first. |
 | `attach_specs` | core | `fn(&[Spec], &mut [Source], &HashSet<String>) -> Coverage` | Map each spec's `files:` onto sources; `existing_paths` is the spec-declared paths that exist, so a governed non-code file is not a phantom. |
 | `build_git_data` | core | `fn(&[CommitInput], &[Spec], &[Source], i64) -> GitData` | Fold a newest-first commit list into update history. The CLI mines the commits from `git log`; the web app from the GitHub API. |
@@ -249,3 +303,4 @@ Then every file under Tests/ and the Package.swift manifest leave the source
 | 4 | 2026-07-03 | `--owns` now reports a real on-disk file the atlas excludes (generated, skipped-dir, or non-code) as `excluded` with a plain `reason`, instead of silently returning a same-named governed cousin. |
 | 5 | 2026-07-03 | Added two more `--svg` components: `sunburst` (the directory tree as coverage rings, tinted clay-to-teal, with the overall percentage in the center) and `calendar` (a GitHub-style commit-activity grid colored spec/code/both), rounding out the deterministic, browser-free component set. |
 | 6 | 2026-07-03 | Added `IgnoreSet` and `.atlasignore` support: a project can scope the coverage denominator (test trees, generated output, a marketing site) with a small root-anchored ignore file, so the percentage reflects the code its specs are actually meant to govern. `load_sources` now takes an `&IgnoreSet`. |
+| 7 | 2026-07-12 | Add a flat source-audited inventory of every public `atlas-core` export so the detailed grouped API below is machine-checkable without changing the engine contract. |

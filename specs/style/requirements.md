@@ -17,19 +17,67 @@ spec: style.spec.md
 
 ## Acceptance Criteria
 
+### REQ-style-001
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - Contrast and accessibility are reasonable: text/background pairs meet WCAG AA
   intent, `:focus-visible` shows a 2px accent ring, `.skip-link` and `.sr-only`
   are present and correct.
+### REQ-style-002
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - No element overflows the page at 390px, 768px, or 1180px viewport widths, in
   both light and dark themes (headless-Chrome overflow audit passes).
+### REQ-style-003
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - Dark mode is delivered solely through `prefers-color-scheme:dark` overriding
   raw channel tokens; no component rule hardcodes a light-only or dark-only hex.
+### REQ-style-004
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - Long paths, identifiers, and code either wrap (`overflow-wrap:anywhere` /
   `word-break:break-all`) or scroll (`overflow-x:auto`); none stretch the layout.
+### REQ-style-005
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - No purple appears anywhere in the palette.
+### REQ-style-006
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - All visible and CSS-inserted text uses plain ASCII punctuation (no em-dash,
   en-dash, or fancy quotes).
+### REQ-style-007
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - Square corners everywhere except circular data-viz dots and legend keys.
+### REQ-style-008
+
+The implementation SHALL satisfy this requirement.
+
+Acceptance Criteria
+
 - The stylesheet references no external font, stylesheet, script, or URL.
 
 ## Constraints
