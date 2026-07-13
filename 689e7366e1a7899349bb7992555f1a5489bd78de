@@ -1,0 +1,1 @@
+{"commit":"689e7366e1a7899349bb7992555f1a5489bd78de","confidence":0.9,"humanApproved":false,"note":"CI: cargo build + cargo test + atlas governance gate green","reviewer":"agent:ci","testsPassed":true,"timestamp":1783916027,"verdict":"proceed"}
