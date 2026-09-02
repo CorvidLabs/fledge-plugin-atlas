@@ -4,6 +4,8 @@ version: 3
 status: active
 files:
   - web/app/app.js
+  - web/app/index.html
+  - web/app/app.css
 
 db_tables: []
 depends_on:
