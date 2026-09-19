@@ -1060,8 +1060,15 @@ fn week_range(ts: i64) -> String {
 
 fn load_specs(root: &Path) -> Result<Vec<Spec>> {
     let mut specs = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    // The flag is "this directory is inside a `specs/` tree". `SKIP_DIRS` is a
+    // list of build and vendor directory *names*, and it must not apply below
+    // that point: a spec module is named after the thing it governs, and
+    // `out`, `build`, `dist`, `target` and `coverage` are all ordinary module
+    // names. Applying the list there made `specs/out/out.spec.md` undiscoverable,
+    // so every file that spec governed was reported as an orphan and the
+    // project's coverage was understated by the whole module.
+    let mut stack = vec![(root.to_path_buf(), false)];
+    while let Some((dir, in_specs)) = stack.pop() {
         let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
             Err(_) => continue,
@@ -1071,12 +1078,14 @@ fn load_specs(root: &Path) -> Result<Vec<Spec>> {
             if path.is_dir() {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
+                if name.starts_with('.') {
+                    continue;
+                }
                 // `specs/` is skipped for source walking, but it is exactly
                 // where specs live, so descend for spec discovery.
-                if name == "specs"
-                    || (!SKIP_DIRS.contains(&name.as_ref()) && !name.starts_with('.'))
-                {
-                    stack.push(path);
+                let descending = in_specs || name == "specs";
+                if descending || !SKIP_DIRS.contains(&name.as_ref()) {
+                    stack.push((path, descending));
                 }
                 continue;
             }
@@ -1131,6 +1140,18 @@ fn find_companions(root: &Path, spec_path: &Path) -> Vec<String> {
     docs
 }
 
+/// Sync verdicts `fledge spec check --json` may report for one spec. Matched as
+/// whole values, never as substrings of the document.
+const DRIFT_VERDICTS: &[&str] = &[
+    "in_sync",
+    "in-sync",
+    "drifted",
+    "out_of_sync",
+    "stale",
+    "drift",
+    "ok",
+];
+
 /// Best-effort drift enrichment via `fledge spec check --json`, only where a
 /// `.specsync/config.toml` exists. A no-op otherwise.
 fn enrich_drift(root: &Path, specs: &mut [Spec]) {
@@ -1145,26 +1166,77 @@ fn enrich_drift(root: &Path, specs: &mut [Spec]) {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(_) => return,
     };
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(&out) else {
+        return;
+    };
     for spec in specs.iter_mut() {
-        let needle = format!("\"{}\"", spec.module);
-        if let Some(pos) = out.find(&needle) {
-            let window = &out[pos..(pos + 240).min(out.len())];
-            for verdict in [
-                "in_sync",
-                "in-sync",
-                "drifted",
-                "out_of_sync",
-                "stale",
-                "drift",
-                "ok",
-            ] {
-                if window.contains(verdict) {
-                    spec.drift = Some(verdict.replace('_', " "));
-                    break;
-                }
+        spec.drift = drift_for(&report, &spec.module);
+    }
+}
+
+/// The sync verdict a `spec check` report carries for one module, or `None`.
+///
+/// This reads the report as JSON. It used to scan the raw text: find the first
+/// `"<module>"` anywhere in the document, take the next 240 bytes, and report
+/// the first verdict word appearing in that window. Three things were wrong
+/// with that. The name matched inside any string — another spec's `depends_on`,
+/// a file path — so the window often described a different spec. The window ran
+/// past the end of the entry, so the *last* spec in the list picked up whatever
+/// top-level key came next: `"stale": []` reported every such spec as stale,
+/// which is a review flag on a spec that is in sync. And `out[pos..pos + 240]`
+/// panics outright when the cut lands inside a multi-byte character.
+fn drift_for(report: &serde_json::Value, module: &str) -> Option<String> {
+    // A module named in the top-level `stale` list is stale, whether the list
+    // holds bare names or objects carrying one.
+    if let Some(entries) = report.get("stale").and_then(|v| v.as_array()) {
+        if entries.iter().any(|entry| names_module(entry, module)) {
+            return Some("stale".into());
+        }
+    }
+    // Otherwise, an explicit verdict on this module's own entry.
+    let entry = report
+        .get("specs")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .find(|entry| names_module(entry, module))?;
+    for field in ["drift", "sync", "sync_status", "verdict"] {
+        let Some(value) = entry.get(field).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if DRIFT_VERDICTS.contains(&value) {
+            return Some(value.replace('_', " "));
+        }
+    }
+    None
+}
+
+/// Whether a `stale` or `specs` entry is about this module. An entry is either
+/// the bare name or an object carrying it under one of the keys spec-sync uses.
+fn names_module(entry: &serde_json::Value, module: &str) -> bool {
+    if let Some(name) = entry.as_str() {
+        return name == module || spec_path_names(name, module);
+    }
+    for key in ["name", "module", "spec"] {
+        if entry.get(key).and_then(|v| v.as_str()) == Some(module) {
+            return true;
+        }
+    }
+    for key in ["path", "spec", "file"] {
+        if let Some(path) = entry.get(key).and_then(|v| v.as_str()) {
+            if spec_path_names(path, module) {
+                return true;
             }
         }
     }
+    false
+}
+
+/// Whether a path is the spec document of this module: `.../<module>.spec.md`,
+/// compared whole so `out` never matches `checkout.spec.md`.
+fn spec_path_names(path: &str, module: &str) -> bool {
+    path.rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|file| file == format!("{module}.spec.md"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1757,6 +1829,143 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].module, "a");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_specs_finds_a_module_named_after_a_build_directory() {
+        // `SKIP_DIRS` holds build and vendor directory names, and a spec module
+        // is named after what it governs. `specs/out/out.spec.md` was pruned by
+        // that list, so every file the spec governed was reported as an orphan.
+        let dir = tmp();
+        for module in ["out", "build", "dist", "target", "coverage", "engine"] {
+            fs::create_dir_all(dir.join("specs").join(module)).unwrap();
+            fs::write(
+                dir.join("specs")
+                    .join(module)
+                    .join(format!("{module}.spec.md")),
+                format!("---\nmodule: {module}\nfiles:\n  - src/{module}.rs\n---\nbody"),
+            )
+            .unwrap();
+        }
+        let found: Vec<String> = load_specs(&dir)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.module)
+            .collect();
+        assert_eq!(
+            found,
+            vec!["build", "coverage", "dist", "engine", "out", "target"]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_specs_still_skips_a_build_tree_outside_specs() {
+        // The list is not disabled, only scoped: a `.spec.md` that a build
+        // copied into `out/` is still not a spec of this project.
+        let dir = tmp();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::write(
+            dir.join("specs/real.spec.md"),
+            "---\nmodule: real\nfiles:\n  - x.rs\n---\nbody",
+        )
+        .unwrap();
+        for skipped in ["out", "node_modules", "target"] {
+            fs::create_dir_all(dir.join(skipped)).unwrap();
+            fs::write(
+                dir.join(skipped).join("copied.spec.md"),
+                "---\nmodule: copied\nfiles:\n  - x.rs\n---\nbody",
+            )
+            .unwrap();
+        }
+        let found: Vec<String> = load_specs(&dir)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.module)
+            .collect();
+        assert_eq!(found, vec!["real"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_spec_in_a_report_is_not_made_stale_by_the_next_key() {
+        // The scrape took 240 bytes after the first `"<module>"` it found and
+        // reported the first verdict word in them. For the last entry in
+        // `specs`, those bytes are the next top-level key: `"stale": []` marked
+        // every such spec stale, and a spec-sync run reporting nothing wrong
+        // produced a needs-review flag.
+        let report = serde_json::json!({
+            "specs": [
+                {"name": "capture", "errors": [], "warnings": []},
+                {"name": "workspace", "errors": [], "warnings": []}
+            ],
+            "stale": [],
+            "totals": {"checked": 2, "errors": 0, "warnings": 0}
+        });
+        assert_eq!(drift_for(&report, "workspace"), None);
+        assert_eq!(drift_for(&report, "capture"), None);
+    }
+
+    #[test]
+    fn a_module_named_in_the_stale_list_is_stale() {
+        let by_name = serde_json::json!({ "specs": [], "stale": ["workspace"] });
+        assert_eq!(drift_for(&by_name, "workspace"), Some("stale".into()));
+
+        let by_object = serde_json::json!({
+            "specs": [],
+            "stale": [{"name": "workspace", "days": 12}]
+        });
+        assert_eq!(drift_for(&by_object, "workspace"), Some("stale".into()));
+
+        let by_path = serde_json::json!({
+            "specs": [],
+            "stale": [{"path": "specs/workspace/workspace.spec.md"}]
+        });
+        assert_eq!(drift_for(&by_path, "workspace"), Some("stale".into()));
+    }
+
+    #[test]
+    fn an_explicit_verdict_on_the_module_s_own_entry_is_reported() {
+        let report = serde_json::json!({
+            "specs": [
+                {"name": "capture", "drift": "in_sync"},
+                {"name": "workspace", "drift": "drifted"}
+            ],
+            "stale": []
+        });
+        assert_eq!(drift_for(&report, "workspace"), Some("drifted".into()));
+        assert_eq!(drift_for(&report, "capture"), Some("in sync".into()));
+        assert_eq!(drift_for(&report, "absent"), None);
+    }
+
+    #[test]
+    fn a_module_name_appearing_in_another_spec_s_entry_is_not_its_verdict() {
+        // `out.find("\"out\"")` hit the `depends_on` of whichever spec came
+        // first, and described that spec instead.
+        let report = serde_json::json!({
+            "specs": [
+                {"name": "main", "depends_on": ["out"], "drift": "drifted"},
+                {"name": "out", "drift": "in_sync"}
+            ],
+            "stale": []
+        });
+        assert_eq!(drift_for(&report, "out"), Some("in sync".into()));
+    }
+
+    #[test]
+    fn a_report_carrying_multibyte_text_does_not_panic() {
+        // `&out[pos..pos + 240]` panics when the cut lands inside a character.
+        let report = serde_json::json!({
+            "specs": [{"name": "café", "note": "un résumé — with an em dash, ünd more"}],
+            "stale": []
+        });
+        assert_eq!(drift_for(&report, "café"), None);
+    }
+
+    #[test]
+    fn a_report_that_is_not_json_is_ignored_rather_than_guessed_at() {
+        let report = serde_json::json!("fledge: unknown command");
+        assert_eq!(drift_for(&report, "workspace"), None);
     }
 
     // ---- integration: the full analysis + render pipeline on a fixture repo ----
