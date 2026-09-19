@@ -127,7 +127,7 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 
 | Function | Crate | Signature | Description |
 |----------|-------|-----------|-------------|
-| `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree (descending into `specs/`, skipping build/vendor), parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. |
+| `load_specs` | cli | `fn(&Path) -> Result<Vec<Spec>>` | Walk the tree, parse every `*.spec.md` with `parse_spec_str`, attach companions, sorted by module. `SKIP_DIRS` prunes build and vendor trees **outside** `specs/` and does not apply below it: a spec module is named after what it governs, so `specs/out/`, `specs/build/` and `specs/target/` are ordinary modules and must be discoverable. |
 | `parse_spec_str` | core | `fn(&str, &str) -> Option<Spec>` | Parse one spec from its relative path and text, rendering its prose to HTML at parse time. Pure. |
 | `load_sources` | cli | `fn(&Path, &IgnoreSet) -> Vec<Source>` | Walk the real source tree, count LOC per code file, skip `SKIP_DIRS`, generated/minified/vendored files, and any path the `IgnoreSet` scopes out. |
 | `parse` / `len` / `is_empty` / `matches` | core | `fn(&str) -> IgnoreSet`, `fn(&self) -> usize`, `fn(&self) -> bool`, `fn(&self, &str) -> bool` | The fully qualified methods are `IgnoreSet::parse`, `IgnoreSet::len`, `IgnoreSet::is_empty`, and `IgnoreSet::matches`. They parse an `.atlasignore` file (read from the project root by the CLI), inspect its pattern count or emptiness, and test a repo-relative path against it. Pattern forms, root-anchored: `dir/` (a directory and its contents), `*.ext` (an extension), or a bare `path` (that exact file, or a directory of that name). Scoped-out files leave the source set entirely, weighing on neither coverage nor orphans. |
@@ -168,7 +168,16 @@ feeds them (walking the tree, reading files and lcov, mining `git log`).
 4. Generated, minified, and vendored files are excluded from the source set via
    `looks_generated`, and directories in `SKIP_DIRS` (target, node_modules,
    .git, dist, specs, and so on) are never walked, so they cannot distort
-   coverage, the verdict, or the treemap.
+   coverage, the verdict, or the treemap. `SKIP_DIRS` is a list of directory
+   *names*, so it applies to the source walk and to spec discovery **above**
+   `specs/` only. Below `specs/` it must not apply: a module named after what it
+   governs is free to be called `out` or `build`, and pruning it there hides the
+   spec and reports every file it governs as an orphan.
+4a. Drift is read from `fledge spec check --json` as JSON, matching a module by
+   its entry in `specs` or by name in `stale`. It is never scraped from the
+   report's text: a name matches inside any string, a fixed-width window past an
+   entry picks up the next top-level key, and slicing a byte offset out of a
+   document with multi-byte characters panics.
 5. `--json` and the HTML atlas derive from the same `Model`; `render_html`
    embeds the exact `Model` JSON that `--json` prints, so the picture and the
    data never disagree.
@@ -304,3 +313,4 @@ Then every file under Tests/ and the Package.swift manifest leave the source
 | 5 | 2026-07-03 | Added two more `--svg` components: `sunburst` (the directory tree as coverage rings, tinted clay-to-teal, with the overall percentage in the center) and `calendar` (a GitHub-style commit-activity grid colored spec/code/both), rounding out the deterministic, browser-free component set. |
 | 6 | 2026-07-03 | Added `IgnoreSet` and `.atlasignore` support: a project can scope the coverage denominator (test trees, generated output, a marketing site) with a small root-anchored ignore file, so the percentage reflects the code its specs are actually meant to govern. `load_sources` now takes an `&IgnoreSet`. |
 | 7 | 2026-07-12 | Add a flat source-audited inventory of every public `atlas-core` export so the detailed grouped API below is machine-checkable without changing the engine contract. |
+| 8 | 2026-09-19 | Two discovery defects. `load_specs` applied `SKIP_DIRS` below the `specs/` root, so a module named after a build directory was undiscoverable and every file it governed was counted as an orphan (found on a project whose `specs/out/out.spec.md` was invisible, understating its coverage by 1,252 lines). And `enrich_drift` scraped verdicts out of the report's raw text with a 240-byte window, so the last spec in `specs` was marked stale by the following `"stale": []` key, a module name matched inside another spec's fields, and a multi-byte cut would have panicked; it now parses the JSON. |
